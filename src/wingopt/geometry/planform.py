@@ -32,6 +32,7 @@ class QuarterChordPoint:
 
     x_m: float
     y_m: float
+    z_m: float
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class WingGeometry:
     mac_m: float
     taper_ratio: float
     sweep_deg: float
+    dihedral_deg: float
     twist_deg: float
     stations: tuple[SpanStation, ...]
     quarter_chord_line: tuple[QuarterChordPoint, ...]
@@ -148,6 +150,7 @@ def compute_planform(cfg: GeometryConfig, stations: int = 31) -> WingGeometry:
     mac = (2.0 / 3.0) * cr * (1.0 + taper + taper * taper) / (1.0 + taper)
 
     sweep_rad = radians(cfg.sweep_deg)
+    dihedral_rad = radians(cfg.dihedral_deg)
 
     station_data: list[SpanStation] = []
     quarter_chord_data: list[QuarterChordPoint] = []
@@ -160,7 +163,8 @@ def compute_planform(cfg: GeometryConfig, stations: int = 31) -> WingGeometry:
         x_qc = abs(y) * tan(sweep_rad)
         if y < 0:
             x_qc = x_qc
-        quarter_chord_data.append(QuarterChordPoint(x_m=x_qc, y_m=y))
+        z_qc = abs(y) * tan(dihedral_rad)
+        quarter_chord_data.append(QuarterChordPoint(x_m=x_qc, y_m=y, z_m=z_qc))
 
     elevons = _build_elevons(cfg, semi_span)
 
@@ -173,6 +177,7 @@ def compute_planform(cfg: GeometryConfig, stations: int = 31) -> WingGeometry:
         mac_m=mac,
         taper_ratio=taper,
         sweep_deg=cfg.sweep_deg,
+        dihedral_deg=cfg.dihedral_deg,
         twist_deg=cfg.twist_deg,
         stations=tuple(station_data),
         quarter_chord_line=tuple(quarter_chord_data),

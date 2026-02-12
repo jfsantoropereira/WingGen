@@ -39,6 +39,7 @@ class WingCandidate:
     root_chord_m: float
     tip_chord_m: float
     sweep_deg: float
+    dihedral_deg: float
     twist_deg: float
     airfoil: str
     cg_fraction_mac: float
@@ -46,6 +47,7 @@ class WingCandidate:
     aspect_ratio: float
     wing_loading_gdm2: float
     static_margin: float
+    lateral_stability_index: float
     trim_elevon_deg: float
     cruise_ld: float
     cruise_cd: float
@@ -57,6 +59,19 @@ class WingCandidate:
     score: float
 
 
+@dataclass(frozen=True)
+class AirfoilComparison:
+    """Side-by-side comparison metrics for each airfoil candidate."""
+
+    airfoil: str
+    evaluated_count: int
+    feasible_count: int
+    best_score: float
+    best_ld: float
+    best_static_margin: float
+    best_stall_speed_kmh: float
+
+
 class WingOptimizer:
     """Optimizer over geometry + airfoil + stability variables."""
 
@@ -64,6 +79,7 @@ class WingOptimizer:
         self.config = config
         self.data_dir = Path(data_dir)
         self.airfoils = self._load_airfoils()
+        self.last_all_candidates: tuple[WingCandidate, ...] = tuple()
 
     def _load_airfoils(self) -> dict[str, AirfoilData]:
         return load_airfoil_library(
@@ -87,8 +103,46 @@ class WingOptimizer:
             if candidate is not None:
                 candidates.append(candidate)
 
+        self.last_all_candidates = tuple(candidates)
         ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
         return tuple(ranked[:top_k])
+
+    def airfoil_comparison(self) -> tuple[AirfoilComparison, ...]:
+        """Return per-airfoil comparison from the latest optimization call."""
+        all_candidates = self.last_all_candidates
+        comparison: list[AirfoilComparison] = []
+        for airfoil in self.config.geometry.airfoil_candidates:
+            group = [candidate for candidate in all_candidates if candidate.airfoil == airfoil]
+            if not group:
+                comparison.append(
+                    AirfoilComparison(
+                        airfoil=airfoil,
+                        evaluated_count=0,
+                        feasible_count=0,
+                        best_score=float("-inf"),
+                        best_ld=0.0,
+                        best_static_margin=0.0,
+                        best_stall_speed_kmh=0.0,
+                    )
+                )
+                continue
+
+            feasible = [candidate for candidate in group if candidate.feasible]
+            best_pool = feasible if feasible else group
+            best = max(best_pool, key=lambda candidate: candidate.score)
+            comparison.append(
+                AirfoilComparison(
+                    airfoil=airfoil,
+                    evaluated_count=len(group),
+                    feasible_count=len(feasible),
+                    best_score=best.score,
+                    best_ld=best.cruise_ld,
+                    best_static_margin=best.static_margin,
+                    best_stall_speed_kmh=best.stall_speed_kmh,
+                )
+            )
+
+        return tuple(comparison)
 
     def _sample_geometry(self, rng: random.Random) -> dict[str, float]:
         space = self.config.design_space.wing
@@ -97,6 +151,7 @@ class WingOptimizer:
             "root_chord_m": rng.uniform(space.root_chord_m.minimum, space.root_chord_m.maximum),
             "tip_chord_m": rng.uniform(space.tip_chord_m.minimum, space.tip_chord_m.maximum),
             "sweep_deg": rng.uniform(space.sweep_deg.minimum, space.sweep_deg.maximum),
+            "dihedral_deg": rng.uniform(space.dihedral_deg.minimum, space.dihedral_deg.maximum),
             "twist_deg": rng.uniform(space.twist_deg.minimum, space.twist_deg.maximum),
             "cg_fraction_mac": rng.uniform(0.16, 0.32),
         }
@@ -108,6 +163,7 @@ class WingOptimizer:
             root_chord_m=wing_cfg["root_chord_m"],
             tip_chord_m=wing_cfg["tip_chord_m"],
             sweep_deg=wing_cfg["sweep_deg"],
+            dihedral_deg=wing_cfg["dihedral_deg"],
             twist_deg=wing_cfg["twist_deg"],
             airfoil=airfoil_name,
             airfoil_candidates=local_geom.airfoil_candidates,
@@ -222,6 +278,7 @@ class WingOptimizer:
             root_chord_m=geometry.root_chord_m,
             tip_chord_m=geometry.tip_chord_m,
             sweep_deg=geometry.sweep_deg,
+            dihedral_deg=geometry.dihedral_deg,
             twist_deg=geometry.twist_deg,
             airfoil=airfoil_name,
             cg_fraction_mac=wing_cfg["cg_fraction_mac"],
@@ -229,6 +286,7 @@ class WingOptimizer:
             aspect_ratio=geometry.aspect_ratio,
             wing_loading_gdm2=wing_loading,
             static_margin=stability_result.static_margin,
+            lateral_stability_index=stability_result.lateral_stability_index,
             trim_elevon_deg=stability_result.trim_elevon_deg,
             cruise_ld=trim_cruise.ld,
             cruise_cd=trim_cruise.cd,
@@ -253,6 +311,7 @@ class WingOptimizer:
         score -= max(0.0, stall_speed_kmh - 30.0) * 2.0
         score -= max(0.0, wing_loading - 45.0) * 1.5
         score += max(0.0, stability_result.static_margin - 0.08) * 100.0
+        score += max(0.0, stability_result.lateral_stability_index - 0.6) * 40.0
         if not feasible:
             score -= 1000.0
         return score

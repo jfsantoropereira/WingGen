@@ -16,6 +16,8 @@ class GeometryTests(unittest.TestCase):
         self.assertGreater(wing.area_m2, 0.0)
         self.assertGreater(wing.aspect_ratio, 0.0)
         self.assertEqual(len(wing.elevons), 4)
+        self.assertGreater(wing.dihedral_deg, 0.0)
+        self.assertTrue(any(point.z_m > 0.0 for point in wing.quarter_chord_line if point.y_m != 0.0))
 
     def test_airfoil_library_loading(self) -> None:
         library = load_airfoil_library(Path("data/airfoils"), self.cfg.geometry.airfoil_candidates)

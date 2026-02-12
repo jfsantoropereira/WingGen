@@ -85,7 +85,7 @@ These values are baseline defaults (not hardcoded limits). The optimizer explore
 │                   OPTIMIZER LOOP                     │
 │         (scipy / evolutionary / Bayesian)            │
 │                                                      │
-│   Design Vector x = [b, cr, ct, Λ, ε, ...]         │
+│   Design Vector x = [b, cr, ct, Λ, Γ, ε, ...]      │
 │                        │                             │
 │              ┌─────────▼──────────┐                  │
 │              │   GEOMETRY MODULE  │                  │
@@ -141,6 +141,7 @@ These values are baseline defaults (not hardcoded limits). The optimizer explore
 - `c_r` — root chord [m]
 - `c_t` — tip chord [m] (or taper ratio λ = c_t / c_r)
 - `sweep` — quarter-chord sweep angle Λ [deg]
+- `dihedral` — wing dihedral angle Γ [deg]
 - `twist` — washout angle ε [deg] (linear root-to-tip)
 - `elevon_span_frac` — fraction of semi-span occupied by elevons
 - `elevon_chord_frac` — fraction of local chord occupied by elevon
@@ -479,6 +480,7 @@ For given cruise speed V_cruise:
 - Best design summary with geometry visualization
 - Weight breakdown pie chart
 - Performance envelope plots (thrust vs drag vs speed)
+- Exported wing geometry artifact (`.stl`) for CAD/mesh workflows
 
 ---
 
@@ -531,6 +533,7 @@ For given cruise speed V_cruise:
 ### Phase 4 — Polish
 - [ ] Ink UI polish pass (layout, UX consistency, accessibility in terminal)
 - [ ] Export optimized design to CAD-ready coordinates
+- [ ] STL export for optimized wing geometry
 - [ ] DXF/SVG export for foam cutting templates
 - [ ] Flight sim integration (optional: export to ArduPilot SITL)
 
@@ -569,6 +572,7 @@ weight = 0.4
 [geometry]
 wingspan_m = 1.5
 sweep_deg = 26.0                # quarter-chord
+dihedral_deg = 4.0              # wing dihedral for lateral stability
 twist_deg = 3.0                 # washout, root to tip
 taper_ratio = 0.5               # tip_chord / root_chord
 airfoil = "mh60"
@@ -634,6 +638,7 @@ max_cg_travel_fraction = 0.03
 [design_space.wing]
 wingspan_m = [1.2, 1.8]
 sweep_deg = [18.0, 35.0]
+dihedral_deg = [0.0, 10.0]
 twist_deg = [0.0, 6.0]
 taper_ratio = [0.3, 0.8]
 

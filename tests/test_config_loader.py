@@ -11,6 +11,7 @@ class ConfigLoaderTests(unittest.TestCase):
         cfg = load_config(Path("configs/default_wing.toml"))
         self.assertAlmostEqual(cfg.geometry.wingspan_m, 1.5)
         self.assertEqual(cfg.geometry.airfoil, "mh60")
+        self.assertAlmostEqual(cfg.geometry.dihedral_deg, 4.0)
         self.assertGreater(len(cfg.environment.resolved_scenarios()), 0)
 
     def test_scenarios_are_normalized(self) -> None:

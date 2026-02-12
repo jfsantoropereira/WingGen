@@ -156,6 +156,7 @@ class GeometryConfig:
     root_chord_m: float
     tip_chord_m: float
     sweep_deg: float
+    dihedral_deg: float
     twist_deg: float
     airfoil: str
     airfoil_candidates: tuple[str, ...]
@@ -164,6 +165,8 @@ class GeometryConfig:
     def __post_init__(self) -> None:
         if self.wingspan_m <= 0 or self.root_chord_m <= 0 or self.tip_chord_m <= 0:
             raise ConfigError("Geometry dimensions must be > 0")
+        if not (-10.0 <= self.dihedral_deg <= 20.0):
+            raise ConfigError("dihedral_deg must be in [-10, 20]")
         if not self.airfoil:
             raise ConfigError("geometry.airfoil cannot be empty")
         if not self.airfoil_candidates:
@@ -326,6 +329,7 @@ class WingDesignSpace:
     root_chord_m: BoundRange
     tip_chord_m: BoundRange
     sweep_deg: BoundRange
+    dihedral_deg: BoundRange
     twist_deg: BoundRange
 
 
@@ -460,6 +464,7 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
             root_chord_m=float(geom_raw["root_chord_m"]),
             tip_chord_m=float(geom_raw["tip_chord_m"]),
             sweep_deg=float(geom_raw["sweep_deg"]),
+            dihedral_deg=float(geom_raw["dihedral_deg"]),
             twist_deg=float(geom_raw["twist_deg"]),
             airfoil=str(geom_raw["airfoil"]).lower(),
             airfoil_candidates=tuple(str(a).lower() for a in geom_raw.get("airfoil_candidates", [])),
@@ -489,6 +494,9 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
                     design_raw["wing"]["tip_chord_m"], "design_space.wing.tip_chord_m"
                 ),
                 sweep_deg=_bound_from(design_raw["wing"]["sweep_deg"], "design_space.wing.sweep_deg"),
+                dihedral_deg=_bound_from(
+                    design_raw["wing"]["dihedral_deg"], "design_space.wing.dihedral_deg"
+                ),
                 twist_deg=_bound_from(design_raw["wing"]["twist_deg"], "design_space.wing.twist_deg"),
             ),
             propulsion=PropulsionDesignSpace(

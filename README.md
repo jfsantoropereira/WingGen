@@ -28,18 +28,31 @@ conda env create -f environment.yml
 ./stop.sh
 ```
 
+Daemon/background mode (optional):
+
+```bash
+./start.sh --daemon
+./stop.sh
+```
+
 ## Conda-First Commands
 
 Install Ink UI dependencies inside Conda env:
 
 ```bash
-conda run -n winggen npm --prefix ui/terminal install
+conda run --no-capture-output -n winggen npm --prefix ui/terminal install
 ```
 
 Run UI lint/typecheck inside Conda env:
 
 ```bash
-conda run -n winggen npm --prefix ui/terminal run lint
+conda run --no-capture-output -n winggen npm --prefix ui/terminal run lint
+```
+
+Run interactive TUI directly from Conda env:
+
+```bash
+conda run --no-capture-output -n winggen npm --prefix ui/terminal run start
 ```
 
 ## Backend CLI (machine-readable)

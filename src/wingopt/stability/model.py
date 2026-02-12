@@ -17,6 +17,8 @@ class StabilityResult:
     neutral_point_fraction_mac: float
     cg_fraction_mac: float
     static_margin: float
+    lateral_stability_index: float
+    lateral_stability_ok: bool
     trim_elevon_deg: float
     hinge_moment_nm: float
     min_speed_control_ok: bool
@@ -27,6 +29,7 @@ class StabilityAnalyzer:
     """Stability analysis for tailless wing concepts."""
 
     SERVO_MAX_TORQUE_NM = 0.30  # high-torque 9g metal-gear class
+    MIN_LATERAL_STABILITY_INDEX = 0.50
 
     def __init__(self, aero_model: AeroModel, stability: StabilityConfig) -> None:
         self.aero_model = aero_model
@@ -53,6 +56,8 @@ class StabilityAnalyzer:
 
         np_fraction = self.estimate_neutral_point_fraction_mac()
         static_margin = np_fraction - cg_fraction_mac
+        lateral_index = self._estimate_lateral_stability_index()
+        lateral_ok = lateral_index >= self.MIN_LATERAL_STABILITY_INDEX
 
         trim = self.aero_model.trim_for_level_flight(
             weight_n=weight_n,
@@ -84,6 +89,8 @@ class StabilityAnalyzer:
             neutral_point_fraction_mac=np_fraction,
             cg_fraction_mac=cg_fraction_mac,
             static_margin=static_margin,
+            lateral_stability_index=lateral_index,
+            lateral_stability_ok=lateral_ok,
             trim_elevon_deg=trim.trim_elevon_deg,
             hinge_moment_nm=hinge_moment,
             min_speed_control_ok=min_trim_ok,
@@ -94,9 +101,14 @@ class StabilityAnalyzer:
         """Check if stability and control constraints are satisfied."""
         return (
             result.static_margin >= self.stability.min_static_margin
+            and result.lateral_stability_ok
             and result.min_speed_control_ok
             and result.max_speed_control_ok
         )
+
+    def _estimate_lateral_stability_index(self) -> float:
+        geom = self.aero_model.geometry
+        return 0.12 * geom.dihedral_deg + 0.01 * geom.sweep_deg
 
     def _required_deflection_within_limit(
         self,

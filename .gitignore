@@ -18,6 +18,7 @@ ui/terminal/.npm/
 # Runtime artifacts
 .winggen.log
 .winggen.pid
+outputs/
 
 # OS/editor
 .DS_Store

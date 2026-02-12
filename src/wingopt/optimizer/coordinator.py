@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from wingopt.config.models import WingGenConfig
+from wingopt.optimizer.wing_optimizer import AirfoilComparison
 from wingopt.optimizer.propulsion_optimizer import PropulsionCandidate, PropulsionOptimizer
 from wingopt.optimizer.wing_optimizer import WingCandidate, WingOptimizer
 
@@ -36,6 +37,7 @@ class CoordinatorResult:
     iterations: tuple[CouplingIteration, ...]
     wing_candidates: tuple[WingCandidate, ...]
     propulsion_candidates: tuple[PropulsionCandidate, ...]
+    airfoil_comparison: tuple[AirfoilComparison, ...]
 
 
 class OptimizationCoordinator:
@@ -57,10 +59,12 @@ class OptimizationCoordinator:
 
         wing_candidates: tuple[WingCandidate, ...] = tuple()
         propulsion_candidates: tuple[PropulsionCandidate, ...] = tuple()
+        airfoil_comparison: tuple[AirfoilComparison, ...] = tuple()
         best_design: IntegratedDesign | None = None
 
         for iteration in range(1, max_iters + 1):
             wing_candidates = self.wing_optimizer.optimize(top_k=10)
+            airfoil_comparison = self.wing_optimizer.airfoil_comparison()
             propulsion_candidates = self.propulsion_optimizer.optimize_for_wings(wing_candidates, top_k=12)
 
             if not wing_candidates or not propulsion_candidates:
@@ -93,6 +97,7 @@ class OptimizationCoordinator:
             iterations=tuple(history),
             wing_candidates=wing_candidates,
             propulsion_candidates=propulsion_candidates,
+            airfoil_comparison=airfoil_comparison,
         )
 
     @staticmethod
@@ -103,7 +108,7 @@ class OptimizationCoordinator:
         wing_by_signature = {
             (
                 f"{w.airfoil}|{w.wingspan_m:.4f}|{w.root_chord_m:.4f}|{w.tip_chord_m:.4f}|"
-                f"{w.sweep_deg:.3f}|{w.twist_deg:.3f}|{w.cg_fraction_mac:.4f}"
+                f"{w.sweep_deg:.3f}|{w.dihedral_deg:.3f}|{w.twist_deg:.3f}|{w.cg_fraction_mac:.4f}"
             ): w
             for w in wings
         }
