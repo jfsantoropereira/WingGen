@@ -1,0 +1,8 @@
+name: winggen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - nodejs>=24
+  - pytest>=8
+  - ruff>=0.8

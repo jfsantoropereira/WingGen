@@ -1,0 +1,130 @@
+[mission]
+cruise_speed_kmh = 60.0
+max_speed_kmh = 100.0
+target_range_km = 30.0
+
+[environment]
+temperature_c = 20.0
+altitude_m = 100.0
+pressure_pa = 101325
+relative_humidity = 0.50
+
+[[environment.scenarios]]
+name = "nominal"
+temperature_c = 20.0
+altitude_m = 100.0
+relative_humidity = 0.50
+weight = 0.6
+
+[[environment.scenarios]]
+name = "hot_high"
+temperature_c = 35.0
+altitude_m = 1500.0
+relative_humidity = 0.30
+weight = 0.4
+
+[geometry]
+wingspan_m = 1.5
+root_chord_m = 0.24
+tip_chord_m = 0.12
+sweep_deg = 26.0
+twist_deg = 3.0
+airfoil = "mh60"
+airfoil_candidates = ["mh60", "mh61", "pw51"]
+
+[geometry.elevons]
+span_fraction = 0.55
+chord_fraction = 0.22
+split_ratio = 0.5
+num_surfaces = 4
+
+[propulsion.motor]
+name = "generic_2216_900kv"
+kv = 900
+rm_ohm = 0.060
+i0_amp = 0.8
+max_current_amp = 30
+weight_g = 68
+
+[propulsion.prop]
+name = "apc_9x6"
+diameter_in = 9.0
+pitch_in = 6.0
+data_file = "apc_9x6.csv"
+
+[propulsion.battery]
+chemistry = "li-ion-18650"
+cell_capacity_mah = 3000
+cell_weight_g = 48
+cell_max_continuous_a = 15
+series = 4
+parallel = 1
+usable_fraction = 0.80
+cell_internal_resistance_ohm = 0.025
+
+[structure]
+foam_type = "xps"
+foam_density_kgm3 = 35
+spar_type = "carbon_tube"
+spar_od_mm = 8.0
+spar_id_mm = 6.0
+center_plate_thickness_mm = 2.0
+skin = "none"
+skin_areal_weight_gm2 = 0.0
+elevon_material = "carbon_sheet"
+elevon_thickness_mm = 0.5
+
+[components]
+fc_weight_g = 12
+gps_weight_g = 12
+rx_weight_g = 3
+vtx_weight_g = 35
+servo_weight_g = 9
+servo_count = 4
+esc_weight_g = 30
+wiring_weight_g = 40
+payload_weight_g = 0
+
+[mass]
+auw_limit_g = 1500
+
+[stability]
+min_static_margin = 0.05
+target_static_margin = 0.12
+max_cg_travel_fraction = 0.03
+
+[design_space.wing]
+wingspan_m = [1.2, 1.8]
+root_chord_m = [0.16, 0.35]
+tip_chord_m = [0.08, 0.24]
+sweep_deg = [18.0, 35.0]
+twist_deg = [0.0, 6.0]
+
+[design_space.propulsion]
+prop_diameter_in = [7.0, 10.0]
+prop_pitch_in = [4.0, 8.0]
+battery_parallel = [1, 3]
+
+[design_space.environment]
+temperature_c = [-10.0, 45.0]
+altitude_m = [0.0, 3000.0]
+payload_weight_g = [0.0, 400.0]
+
+[optimizer.wing]
+method = "grid_search"
+max_evaluations = 120
+population_size = 40
+objective = "aero_efficiency_and_stability"
+seed = 42
+
+[optimizer.propulsion]
+method = "grid_search"
+max_evaluations = 120
+population_size = 40
+objective = "range_endurance_efficiency"
+seed = 43
+
+[optimizer.coordinator]
+max_coupling_iterations = 3
+convergence_tolerance = 0.01
+aggregation = "weighted_scenario_mean"

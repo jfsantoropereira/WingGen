@@ -1,0 +1,4 @@
+name,kv,rm_ohm,i0_amp,max_current_amp,weight_g
+generic_2216_900kv,900,0.060,0.8,30,68
+generic_2212_1000kv,1000,0.055,1.0,28,62
+generic_2820_820kv,820,0.072,0.9,35,96

@@ -1,0 +1,13 @@
+[foam]
+eps_density_kgm3 = 20.0
+epp_density_kgm3 = 30.0
+xps_density_kgm3 = 35.0
+
+[carbon]
+density_kgm3 = 1600.0
+e_gpa = 120.0
+sigma_ult_mpa = 1200.0
+
+[epoxy]
+density_kgm3 = 1150.0
+allowance_fraction = 0.08
