@@ -121,7 +121,8 @@ class PropulsionOptimizer:
             tip_chord_m=wing.tip_chord_m,
             sweep_deg=wing.sweep_deg,
             dihedral_deg=wing.dihedral_deg,
-            twist_deg=wing.twist_deg,
+            root_incidence_deg=wing.root_incidence_deg,
+            tip_incidence_deg=wing.tip_incidence_deg,
             airfoil=wing.airfoil,
             airfoil_candidates=self.config.geometry.airfoil_candidates,
             elevons=self.config.geometry.elevons,
@@ -203,7 +204,8 @@ class PropulsionOptimizer:
     def _wing_signature(wing: WingCandidate) -> str:
         return (
             f"{wing.airfoil}|{wing.wingspan_m:.4f}|{wing.root_chord_m:.4f}|{wing.tip_chord_m:.4f}|"
-            f"{wing.sweep_deg:.3f}|{wing.dihedral_deg:.3f}|{wing.twist_deg:.3f}|{wing.cg_fraction_mac:.4f}"
+            f"{wing.sweep_deg:.3f}|{wing.dihedral_deg:.3f}|"
+            f"{wing.root_incidence_deg:.3f}|{wing.tip_incidence_deg:.3f}|{wing.cg_fraction_mac:.4f}"
         )
 
     def _non_propulsion_mass(self, wing: WingCandidate) -> float:

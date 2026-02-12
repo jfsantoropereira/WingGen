@@ -21,6 +21,15 @@ class OptimizerTests(unittest.TestCase):
         results = optimizer.optimize(top_k=3)
         self.assertGreater(len(results), 0)
         self.assertTrue(all(r.airfoil in self.cfg.geometry.airfoil_candidates for r in results))
+        for candidate in results:
+            self.assertGreaterEqual(
+                candidate.root_incidence_deg,
+                self.cfg.design_space.wing.root_incidence_deg.minimum,
+            )
+            self.assertLessEqual(
+                candidate.tip_incidence_deg,
+                self.cfg.design_space.wing.tip_incidence_deg.maximum,
+            )
 
     def test_propulsion_optimizer(self) -> None:
         wing_results = WingOptimizer(config=self.cfg, data_dir="data").optimize(top_k=2)
@@ -31,6 +40,8 @@ class OptimizerTests(unittest.TestCase):
         result = OptimizationCoordinator(config=self.cfg, data_dir="data").run()
         self.assertGreater(len(result.iterations), 0)
         self.assertTrue(result.best_design.propulsion.weighted_range_km > 0)
+        self.assertTrue(result.best_design.wing.feasible)
+        self.assertTrue(result.best_design.propulsion.feasible)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,8 @@ class WingCandidate:
     tip_chord_m: float
     sweep_deg: float
     dihedral_deg: float
+    root_incidence_deg: float
+    tip_incidence_deg: float
     twist_deg: float
     airfoil: str
     cg_fraction_mac: float
@@ -152,8 +154,18 @@ class WingOptimizer:
             "tip_chord_m": rng.uniform(space.tip_chord_m.minimum, space.tip_chord_m.maximum),
             "sweep_deg": rng.uniform(space.sweep_deg.minimum, space.sweep_deg.maximum),
             "dihedral_deg": rng.uniform(space.dihedral_deg.minimum, space.dihedral_deg.maximum),
-            "twist_deg": rng.uniform(space.twist_deg.minimum, space.twist_deg.maximum),
-            "cg_fraction_mac": rng.uniform(0.16, 0.32),
+            "root_incidence_deg": rng.uniform(
+                space.root_incidence_deg.minimum,
+                space.root_incidence_deg.maximum,
+            ),
+            "tip_incidence_deg": rng.uniform(
+                space.tip_incidence_deg.minimum,
+                space.tip_incidence_deg.maximum,
+            ),
+            "cg_fraction_mac": rng.uniform(
+                space.cg_fraction_mac.minimum,
+                space.cg_fraction_mac.maximum,
+            ),
         }
 
     def _evaluate_candidate(self, wing_cfg: dict[str, float], airfoil_name: str) -> WingCandidate | None:
@@ -164,7 +176,8 @@ class WingOptimizer:
             tip_chord_m=wing_cfg["tip_chord_m"],
             sweep_deg=wing_cfg["sweep_deg"],
             dihedral_deg=wing_cfg["dihedral_deg"],
-            twist_deg=wing_cfg["twist_deg"],
+            root_incidence_deg=wing_cfg["root_incidence_deg"],
+            tip_incidence_deg=wing_cfg["tip_incidence_deg"],
             airfoil=airfoil_name,
             airfoil_candidates=local_geom.airfoil_candidates,
             elevons=local_geom.elevons,
@@ -225,14 +238,17 @@ class WingOptimizer:
         except Exception:
             return None
 
-        stability_result = stability.analyze(
-            atmosphere=atmosphere,
-            weight_n=weight_n,
-            cruise_speed_ms=cruise_speed,
-            min_speed_ms=max(8.0, cruise_speed * 0.60),
-            max_speed_ms=max_speed,
-            cg_fraction_mac=wing_cfg["cg_fraction_mac"],
-        )
+        try:
+            stability_result = stability.analyze(
+                atmosphere=atmosphere,
+                weight_n=weight_n,
+                cruise_speed_ms=cruise_speed,
+                min_speed_ms=max(8.0, cruise_speed * 0.60),
+                max_speed_ms=max_speed,
+                cg_fraction_mac=wing_cfg["cg_fraction_mac"],
+            )
+        except Exception:
+            return None
 
         q_cruise = 0.5 * atmosphere.density_kgm3 * cruise_speed * cruise_speed
         q_max = 0.5 * atmosphere.density_kgm3 * max_speed * max_speed
@@ -279,6 +295,8 @@ class WingOptimizer:
             tip_chord_m=geometry.tip_chord_m,
             sweep_deg=geometry.sweep_deg,
             dihedral_deg=geometry.dihedral_deg,
+            root_incidence_deg=geometry.root_incidence_deg,
+            tip_incidence_deg=geometry.tip_incidence_deg,
             twist_deg=geometry.twist_deg,
             airfoil=airfoil_name,
             cg_fraction_mac=wing_cfg["cg_fraction_mac"],

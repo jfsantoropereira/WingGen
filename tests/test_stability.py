@@ -31,6 +31,8 @@ class StabilityTests(unittest.TestCase):
 
         self.assertGreater(result.neutral_point_fraction_mac, 0.0)
         self.assertLess(result.neutral_point_fraction_mac, 1.0)
+        self.assertLess(result.forward_cg_fraction_mac, result.aft_cg_fraction_mac)
+        self.assertGreater(result.forward_static_margin, result.aft_static_margin)
 
 
 if __name__ == "__main__":

@@ -161,8 +161,10 @@ def _section_at_y(
     x_qc = y_abs * tan(radians(geometry.sweep_deg))
     z_dihedral = y_abs * tan(radians(geometry.dihedral_deg))
 
-    # Washout grows from root to tip; negative incidence at tip.
-    twist = radians(-geometry.twist_deg * ratio)
+    local_incidence_deg = geometry.root_incidence_deg + (
+        (geometry.tip_incidence_deg - geometry.root_incidence_deg) * ratio
+    )
+    incidence_rad = radians(-local_incidence_deg)
 
     section: list[tuple[float, float, float]] = []
     for x_norm, y_norm in profile_xy:
@@ -172,8 +174,8 @@ def _section_at_y(
         # Rotate around local quarter-chord axis.
         dx = x_local - 0.25 * chord
         dz = z_local
-        x_rot = 0.25 * chord + dx * cos(twist) - dz * sin(twist)
-        z_rot = dz * cos(twist) + dx * sin(twist)
+        x_rot = 0.25 * chord + dx * cos(incidence_rad) - dz * sin(incidence_rad)
+        z_rot = dz * cos(incidence_rad) + dx * sin(incidence_rad)
 
         x_global = (x_qc - 0.25 * chord) + x_rot
         y_global = y

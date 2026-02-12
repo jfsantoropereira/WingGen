@@ -11,6 +11,9 @@ This is a Python-based aerodynamic optimizer for long-range FPV flying wings. It
   - Start: `./start.sh`
   - Stop: `./stop.sh`
 - Conda is the only allowed environment/package manager for project setup. Environment definition must live in `environment.yml`.
+- Wing optimization must include independent `root_incidence_deg` and `tip_incidence_deg` plus `cg_fraction_mac` as optimized parameters (not fixed constants).
+- Stability checks must evaluate a CG travel envelope using `stability.max_cg_travel_fraction`, not only a single nominal CG point.
+- STL exports must be watertight, tip-capped, and generated from the selected airfoil coordinate set at high enough resolution to preserve leading-edge shape.
 - No code slop or spaghetti code:
   - Keep strict boundaries between UI, orchestration/runtime control, and simulation core.
   - Prefer cohesive modules, explicit interfaces, and maintainable function/class sizes.

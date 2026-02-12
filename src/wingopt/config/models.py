@@ -157,7 +157,8 @@ class GeometryConfig:
     tip_chord_m: float
     sweep_deg: float
     dihedral_deg: float
-    twist_deg: float
+    root_incidence_deg: float
+    tip_incidence_deg: float
     airfoil: str
     airfoil_candidates: tuple[str, ...]
     elevons: ElevonConfig
@@ -167,10 +168,19 @@ class GeometryConfig:
             raise ConfigError("Geometry dimensions must be > 0")
         if not (-10.0 <= self.dihedral_deg <= 20.0):
             raise ConfigError("dihedral_deg must be in [-10, 20]")
+        if not (-15.0 <= self.root_incidence_deg <= 15.0):
+            raise ConfigError("root_incidence_deg must be in [-15, 15]")
+        if not (-15.0 <= self.tip_incidence_deg <= 15.0):
+            raise ConfigError("tip_incidence_deg must be in [-15, 15]")
         if not self.airfoil:
             raise ConfigError("geometry.airfoil cannot be empty")
         if not self.airfoil_candidates:
             raise ConfigError("At least one airfoil candidate is required")
+
+    @property
+    def twist_deg(self) -> float:
+        """Return root-to-tip incidence difference (washout positive)."""
+        return self.root_incidence_deg - self.tip_incidence_deg
 
 
 @dataclass(frozen=True)
@@ -330,7 +340,9 @@ class WingDesignSpace:
     tip_chord_m: BoundRange
     sweep_deg: BoundRange
     dihedral_deg: BoundRange
-    twist_deg: BoundRange
+    root_incidence_deg: BoundRange
+    tip_incidence_deg: BoundRange
+    cg_fraction_mac: BoundRange
 
 
 @dataclass(frozen=True)
@@ -459,13 +471,22 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
         )
 
         geom_raw = raw["geometry"]
+        if "root_incidence_deg" in geom_raw and "tip_incidence_deg" in geom_raw:
+            root_incidence_deg = float(geom_raw["root_incidence_deg"])
+            tip_incidence_deg = float(geom_raw["tip_incidence_deg"])
+        else:
+            # Backward-compatible fallback: previous schema used `twist_deg` only.
+            twist_fallback = float(geom_raw.get("twist_deg", 0.0))
+            root_incidence_deg = 0.0
+            tip_incidence_deg = -twist_fallback
         geometry = GeometryConfig(
             wingspan_m=float(geom_raw["wingspan_m"]),
             root_chord_m=float(geom_raw["root_chord_m"]),
             tip_chord_m=float(geom_raw["tip_chord_m"]),
             sweep_deg=float(geom_raw["sweep_deg"]),
             dihedral_deg=float(geom_raw["dihedral_deg"]),
-            twist_deg=float(geom_raw["twist_deg"]),
+            root_incidence_deg=root_incidence_deg,
+            tip_incidence_deg=tip_incidence_deg,
             airfoil=str(geom_raw["airfoil"]).lower(),
             airfoil_candidates=tuple(str(a).lower() for a in geom_raw.get("airfoil_candidates", [])),
             elevons=ElevonConfig(**geom_raw["elevons"]),
@@ -484,20 +505,50 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
         stability = StabilityConfig(**raw["stability"])
 
         design_raw = raw["design_space"]
+        wing_design_raw = design_raw["wing"]
+        if "root_incidence_deg" in wing_design_raw and "tip_incidence_deg" in wing_design_raw:
+            root_incidence_bounds = _bound_from(
+                wing_design_raw["root_incidence_deg"],
+                "design_space.wing.root_incidence_deg",
+            )
+            tip_incidence_bounds = _bound_from(
+                wing_design_raw["tip_incidence_deg"],
+                "design_space.wing.tip_incidence_deg",
+            )
+        else:
+            # Backward-compatible fallback for legacy schema that exposed only twist_deg.
+            twist_bounds = _bound_from(
+                wing_design_raw["twist_deg"],
+                "design_space.wing.twist_deg",
+            )
+            root_incidence_bounds = BoundRange(0.0, 0.0)
+            tip_incidence_bounds = BoundRange(
+                -twist_bounds.maximum,
+                -twist_bounds.minimum,
+            )
+        if "cg_fraction_mac" in wing_design_raw:
+            cg_bounds = _bound_from(
+                wing_design_raw["cg_fraction_mac"],
+                "design_space.wing.cg_fraction_mac",
+            )
+        else:
+            cg_bounds = BoundRange(0.16, 0.32)
         design_space = DesignSpaceConfig(
             wing=WingDesignSpace(
-                wingspan_m=_bound_from(design_raw["wing"]["wingspan_m"], "design_space.wing.wingspan_m"),
+                wingspan_m=_bound_from(wing_design_raw["wingspan_m"], "design_space.wing.wingspan_m"),
                 root_chord_m=_bound_from(
-                    design_raw["wing"]["root_chord_m"], "design_space.wing.root_chord_m"
+                    wing_design_raw["root_chord_m"], "design_space.wing.root_chord_m"
                 ),
                 tip_chord_m=_bound_from(
-                    design_raw["wing"]["tip_chord_m"], "design_space.wing.tip_chord_m"
+                    wing_design_raw["tip_chord_m"], "design_space.wing.tip_chord_m"
                 ),
-                sweep_deg=_bound_from(design_raw["wing"]["sweep_deg"], "design_space.wing.sweep_deg"),
+                sweep_deg=_bound_from(wing_design_raw["sweep_deg"], "design_space.wing.sweep_deg"),
                 dihedral_deg=_bound_from(
-                    design_raw["wing"]["dihedral_deg"], "design_space.wing.dihedral_deg"
+                    wing_design_raw["dihedral_deg"], "design_space.wing.dihedral_deg"
                 ),
-                twist_deg=_bound_from(design_raw["wing"]["twist_deg"], "design_space.wing.twist_deg"),
+                root_incidence_deg=root_incidence_bounds,
+                tip_incidence_deg=tip_incidence_bounds,
+                cg_fraction_mac=cg_bounds,
             ),
             propulsion=PropulsionDesignSpace(
                 prop_diameter_in=_bound_from(

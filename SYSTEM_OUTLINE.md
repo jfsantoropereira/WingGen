@@ -571,12 +571,14 @@ weight = 0.4
 
 [geometry]
 wingspan_m = 1.5
+root_chord_m = 0.24
+tip_chord_m = 0.12
 sweep_deg = 26.0                # quarter-chord
 dihedral_deg = 4.0              # wing dihedral for lateral stability
-twist_deg = 3.0                 # washout, root to tip
-taper_ratio = 0.5               # tip_chord / root_chord
+root_incidence_deg = 0.5        # root incidence relative to fuselage reference
+tip_incidence_deg = -2.0        # tip incidence (negative is washout)
 airfoil = "mh60"
-airfoil_candidates = ["mh60", "mh61", "pw51"]
+airfoil_candidates = ["mh60", "mh61", "pw51", "naca0012", "naca2412", "naca4412", "naca6409", "e205_like", "ag35_like"]
 
 [geometry.elevons]
 span_fraction = 0.55            # of semi-span
@@ -637,10 +639,13 @@ max_cg_travel_fraction = 0.03
 
 [design_space.wing]
 wingspan_m = [1.2, 1.8]
+root_chord_m = [0.16, 0.35]
+tip_chord_m = [0.08, 0.24]
 sweep_deg = [18.0, 35.0]
 dihedral_deg = [0.0, 10.0]
-twist_deg = [0.0, 6.0]
-taper_ratio = [0.3, 0.8]
+root_incidence_deg = [-0.5, 2.0]
+tip_incidence_deg = [-4.0, 0.5]
+cg_fraction_mac = [0.16, 0.30]
 
 [design_space.propulsion]
 prop_diameter_in = [7.0, 10.0]

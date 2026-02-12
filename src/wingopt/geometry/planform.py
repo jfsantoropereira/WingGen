@@ -60,6 +60,8 @@ class WingGeometry:
     taper_ratio: float
     sweep_deg: float
     dihedral_deg: float
+    root_incidence_deg: float
+    tip_incidence_deg: float
     twist_deg: float
     stations: tuple[SpanStation, ...]
     quarter_chord_line: tuple[QuarterChordPoint, ...]
@@ -178,6 +180,8 @@ def compute_planform(cfg: GeometryConfig, stations: int = 31) -> WingGeometry:
         taper_ratio=taper,
         sweep_deg=cfg.sweep_deg,
         dihedral_deg=cfg.dihedral_deg,
+        root_incidence_deg=cfg.root_incidence_deg,
+        tip_incidence_deg=cfg.tip_incidence_deg,
         twist_deg=cfg.twist_deg,
         stations=tuple(station_data),
         quarter_chord_line=tuple(quarter_chord_data),

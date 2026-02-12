@@ -43,8 +43,12 @@ class AeroModel:
         self.geometry = geometry
         self.airfoil = airfoil
 
+    def _mean_incidence_deg(self) -> float:
+        return 0.5 * (self.geometry.root_incidence_deg + self.geometry.tip_incidence_deg)
+
     def _coeffs_2d(self, alpha_deg: float) -> tuple[float, float, float]:
-        polar = self.airfoil.interpolate_polar(alpha_deg)
+        effective_alpha = alpha_deg + self._mean_incidence_deg()
+        polar = self.airfoil.interpolate_polar(effective_alpha)
         return polar.cl, polar.cd, polar.cm
 
     def _cl_3d(self, alpha_deg: float) -> float:
@@ -52,7 +56,9 @@ class AeroModel:
         ar = self.geometry.aspect_ratio
         sweep_factor = cos(radians(self.geometry.sweep_deg)) ** 0.7
         finite_wing_factor = ar / (ar + 2.0)
-        return cl2d * finite_wing_factor * sweep_factor
+        washout = abs(self.geometry.root_incidence_deg - self.geometry.tip_incidence_deg)
+        washout_factor = max(0.85, 1.0 - 0.015 * washout)
+        return cl2d * finite_wing_factor * sweep_factor * washout_factor
 
     def _estimate_cd0(self, atmosphere: AtmosphereState, speed_ms: float) -> tuple[float, float]:
         # Friction-based drag buildup from representative wetted area and form factors.
@@ -142,8 +148,9 @@ class AeroModel:
         """Solve angle of attack that achieves target CL by bisection."""
 
         alphas = sorted(point.alpha_deg for point in self.airfoil.polars)
-        lo = alphas[0] if alpha_min_deg is None else alpha_min_deg
-        hi = alphas[-1] if alpha_max_deg is None else alpha_max_deg
+        mean_incidence = self._mean_incidence_deg()
+        lo = (alphas[0] - mean_incidence) if alpha_min_deg is None else alpha_min_deg
+        hi = (alphas[-1] - mean_incidence) if alpha_max_deg is None else alpha_max_deg
         if lo >= hi:
             raise ValueError("alpha search bounds must satisfy min < max")
         cl_lo = self._cl_3d(lo)

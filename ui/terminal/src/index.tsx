@@ -21,6 +21,9 @@ type BestDesign = {
 		aspect_ratio: number;
 		sweep_deg: number;
 		dihedral_deg: number;
+		root_incidence_deg: number;
+		tip_incidence_deg: number;
+		cg_fraction_mac: number;
 		cruise_ld: number;
 		stall_speed_kmh: number;
 		static_margin: number;
@@ -272,6 +275,9 @@ const App: React.FC = () => {
 						</Text>
 						<Text>
 							Geometry: sweep {formatNumber(result.best_design.wing.sweep_deg)} deg · dihedral {formatNumber(result.best_design.wing.dihedral_deg)} deg
+						</Text>
+						<Text>
+							Incidence: root {formatNumber(result.best_design.wing.root_incidence_deg)} deg · tip {formatNumber(result.best_design.wing.tip_incidence_deg)} deg · CG {formatNumber(result.best_design.wing.cg_fraction_mac * 100, 1)}% MAC
 						</Text>
 						<Text>
 							Aero: L/D {formatNumber(result.best_design.wing.cruise_ld)} · stall {formatNumber(result.best_design.wing.stall_speed_kmh)} km/h · SM {formatNumber(result.best_design.wing.static_margin * 100)}%

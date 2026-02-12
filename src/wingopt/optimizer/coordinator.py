@@ -65,7 +65,10 @@ class OptimizationCoordinator:
         for iteration in range(1, max_iters + 1):
             wing_candidates = self.wing_optimizer.optimize(top_k=10)
             airfoil_comparison = self.wing_optimizer.airfoil_comparison()
-            propulsion_candidates = self.propulsion_optimizer.optimize_for_wings(wing_candidates, top_k=12)
+            propulsion_input = tuple(candidate for candidate in wing_candidates if candidate.feasible)
+            if not propulsion_input:
+                propulsion_input = wing_candidates
+            propulsion_candidates = self.propulsion_optimizer.optimize_for_wings(propulsion_input, top_k=12)
 
             if not wing_candidates or not propulsion_candidates:
                 raise RuntimeError("Optimization produced no valid candidates")
@@ -108,21 +111,32 @@ class OptimizationCoordinator:
         wing_by_signature = {
             (
                 f"{w.airfoil}|{w.wingspan_m:.4f}|{w.root_chord_m:.4f}|{w.tip_chord_m:.4f}|"
-                f"{w.sweep_deg:.3f}|{w.dihedral_deg:.3f}|{w.twist_deg:.3f}|{w.cg_fraction_mac:.4f}"
+                f"{w.sweep_deg:.3f}|{w.dihedral_deg:.3f}|"
+                f"{w.root_incidence_deg:.3f}|{w.tip_incidence_deg:.3f}|{w.cg_fraction_mac:.4f}"
             ): w
             for w in wings
         }
 
         best_prop = None
         best_score = float("-inf")
+        best_feasible = None
+        best_feasible_score = float("-inf")
         for prop in props:
             wing = wing_by_signature.get(prop.wing_signature)
             if wing is None:
                 continue
             combined = 0.45 * wing.score + 0.55 * prop.score
+            pair = (wing, prop)
+            if wing.feasible and prop.feasible and combined > best_feasible_score:
+                best_feasible_score = combined
+                best_feasible = pair
             if combined > best_score:
                 best_score = combined
-                best_prop = (wing, prop)
+                best_prop = pair
+
+        if best_feasible is not None:
+            wing, prop = best_feasible
+            return IntegratedDesign(wing=wing, propulsion=prop, combined_score=best_feasible_score)
 
         if best_prop is None:
             # Fallback: simply pair top-ranked of each list
