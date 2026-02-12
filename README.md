@@ -63,11 +63,46 @@ Run the optimizer directly (NDJSON events):
 conda run -n winggen python scripts/simulate.py --config configs/default_wing.toml
 ```
 
+Useful switches:
+
+- `--disable-organic` (skip pass-2 refinement)
+- `--organic-engine proxy|su2|openfoam|dafoam` (override configured pass-2 engine)
+
 Event contract:
 
 - `progress`
 - `result`
 - `error`
+
+## Organic Pass-2 Refinement
+
+The simulator now runs a second-pass evolutionary organic refinement (enabled in `configs/default_wing.toml`) that optimizes a non-constant spanwise dihedral profile and exports a high-resolution final STL.
+
+Default final STL:
+
+- `outputs/best_wing_organic_highres.stl`
+
+### External CFD Runner Contract
+
+For `organic_refinement.engine = "su2" | "openfoam" | "dafoam"`, set:
+
+- `organic_refinement.cfd.external_runner`
+
+Template placeholders supported:
+
+- `{engine}`
+- `{case_dir}`
+- `{input_json}`
+- `{output_json}`
+
+Example contract runner (included):
+
+```bash
+python3 scripts/cfd/mock_external_cfd.py \
+  --engine {engine} \
+  --input-json {input_json} \
+  --output-json {output_json}
+```
 
 ## Architecture
 

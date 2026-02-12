@@ -15,6 +15,8 @@ class ConfigLoaderTests(unittest.TestCase):
         self.assertAlmostEqual(cfg.geometry.root_incidence_deg, 0.5)
         self.assertAlmostEqual(cfg.geometry.tip_incidence_deg, -2.0)
         self.assertAlmostEqual(cfg.design_space.wing.cg_fraction_mac.minimum, 0.16)
+        self.assertTrue(cfg.organic_refinement.enabled)
+        self.assertEqual(cfg.organic_refinement.engine, "proxy")
         self.assertGreater(len(cfg.environment.resolved_scenarios()), 0)
 
     def test_scenarios_are_normalized(self) -> None:

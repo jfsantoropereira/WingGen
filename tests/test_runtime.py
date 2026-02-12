@@ -25,6 +25,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreater(stl_file.stat().st_size, 0)
         self.assertIn("airfoil_comparison", result_event["payload"])
         self.assertGreaterEqual(len(result_event["payload"]["airfoil_comparison"]), 3)
+        self.assertIn("organic_refinement", result_event["payload"])
+        self.assertIsNotNone(result_event["payload"]["organic_refinement"])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from wingopt.config import ConfigError, load_config
 from wingopt.config.models import GeometryConfig
 from wingopt.geometry.airfoil import load_airfoil_coordinates
 from wingopt.geometry.planform import compute_planform
+from wingopt.organic import OrganicRefiner
 from wingopt.optimizer import OptimizationCoordinator
 from wingopt.viz import export_wing_stl
 
@@ -49,7 +50,15 @@ def emit_event(event_type: str, payload: dict[str, Any], ndjson: bool) -> None:
         sys.stdout.flush()
 
 
-def _export_best_design_stl(config, wing, data_dir: Path, stl_out: Path) -> Path:
+def _export_best_design_stl(
+    config,
+    wing,
+    data_dir: Path,
+    stl_out: Path,
+    span_sections: int = 81,
+    profile_points: int = 161,
+    dihedral_profile: tuple[tuple[float, float], ...] | None = None,
+) -> Path:
     geometry_cfg = GeometryConfig(
         wingspan_m=wing.wingspan_m,
         root_chord_m=wing.root_chord_m,
@@ -70,6 +79,9 @@ def _export_best_design_stl(config, wing, data_dir: Path, stl_out: Path) -> Path
         geometry=geometry,
         airfoil_coordinates=airfoil_coords,
         output_path=stl_out,
+        span_sections=span_sections,
+        profile_points=profile_points,
+        dihedral_profile=dihedral_profile,
     )
 
 
@@ -80,6 +92,8 @@ def run(
     ndjson: bool = True,
     cruise_speed_override_kmh: float | None = None,
     payload_override_g: float | None = None,
+    organic_engine_override: str | None = None,
+    disable_organic: bool = False,
 ) -> int:
     emit_event("progress", {"stage": "load_config", "percent": 5}, ndjson)
     try:
@@ -124,16 +138,86 @@ def run(
             components=replace(config.components, payload_weight_g=float(payload_override_g)),
         )
 
+    if disable_organic:
+        config = replace(
+            config,
+            organic_refinement=replace(config.organic_refinement, enabled=False),
+        )
+    if organic_engine_override is not None:
+        config = replace(
+            config,
+            organic_refinement=replace(
+                config.organic_refinement,
+                enabled=True,
+                engine=str(organic_engine_override).lower(),
+            ),
+        )
+
     emit_event("progress", {"stage": "initialize_coordinator", "percent": 20}, ndjson)
     coordinator = OptimizationCoordinator(config=config, data_dir=str(data_dir))
 
     try:
         emit_event("progress", {"stage": "run_optimization", "percent": 45}, ndjson)
         result = coordinator.run()
-        emit_event("progress", {"stage": "finalize", "percent": 95}, ndjson)
     except Exception as exc:
         emit_event("error", {"message": str(exc), "stage": "run_optimization"}, ndjson)
         return 3
+
+    organic_payload: dict[str, Any] | None = None
+    export_target = stl_out
+    export_span_sections = 81
+    export_profile_points = 161
+    export_dihedral_profile: tuple[tuple[float, float], ...] | None = None
+
+    if config.organic_refinement.enabled:
+        emit_event("progress", {"stage": "organic_refinement", "percent": 70}, ndjson)
+        try:
+            organic_refiner = OrganicRefiner(config=config, data_dir=data_dir)
+
+            max_generations = max(config.organic_refinement.generations, 1)
+
+            def on_organic_generation(summary) -> None:
+                fraction = summary.generation / max_generations
+                percent = int(70 + round(20.0 * fraction))
+                emit_event(
+                    "progress",
+                    {
+                        "stage": "organic_refinement",
+                        "percent": min(percent, 90),
+                        "note": (
+                            f"Generation {summary.generation}/{max_generations} "
+                            f"best_score={summary.best_score:.2f} "
+                            f"feasible={summary.feasible_count}"
+                        ),
+                    },
+                    ndjson,
+                )
+
+            organic_result = organic_refiner.refine(
+                result.best_design.wing,
+                progress_hook=on_organic_generation,
+            )
+            organic_payload = _to_jsonable(organic_result)
+
+            export_target = Path(config.organic_refinement.export.output_stl)
+            export_span_sections = config.organic_refinement.export.span_sections
+            export_profile_points = config.organic_refinement.export.profile_points
+            export_dihedral_profile = tuple(
+                (point.eta, point.angle_deg)
+                for point in organic_result.best_candidate.dihedral_profile
+            )
+        except Exception as exc:
+            emit_event(
+                "progress",
+                {
+                    "stage": "organic_refinement",
+                    "percent": 86,
+                    "note": f"Organic refinement skipped: {exc}",
+                },
+                ndjson,
+            )
+
+    emit_event("progress", {"stage": "finalize", "percent": 95}, ndjson)
 
     emit_event("progress", {"stage": "export_stl", "percent": 97}, ndjson)
     try:
@@ -141,7 +225,10 @@ def run(
             config,
             result.best_design.wing,
             data_dir=data_dir,
-            stl_out=stl_out,
+            stl_out=export_target,
+            span_sections=export_span_sections,
+            profile_points=export_profile_points,
+            dihedral_profile=export_dihedral_profile,
         )
     except Exception as exc:
         emit_event("error", {"message": str(exc), "stage": "export_stl"}, ndjson)
@@ -155,7 +242,12 @@ def run(
             "top_wing_candidates": _to_jsonable(result.wing_candidates[:5]),
             "top_propulsion_candidates": _to_jsonable(result.propulsion_candidates[:5]),
             "airfoil_comparison": _to_jsonable(result.airfoil_comparison),
-            "artifacts": {"stl_file": str(stl_path)},
+            "organic_refinement": organic_payload,
+            "artifacts": {
+                "stl_file": str(stl_path),
+                "baseline_stl_file": str(stl_path) if organic_payload is None else None,
+                "organic_stl_file": str(stl_path) if organic_payload else None,
+            },
         },
         ndjson,
     )
@@ -170,6 +262,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stl-out", type=Path, default=Path("outputs/best_wing.stl"))
     parser.add_argument("--override-mission-cruise-kmh", type=float, default=None)
     parser.add_argument("--override-payload-g", type=float, default=None)
+    parser.add_argument(
+        "--organic-engine",
+        type=str,
+        default=None,
+        choices=["proxy", "su2", "openfoam", "dafoam"],
+    )
+    parser.add_argument("--disable-organic", action="store_true")
     parser.add_argument("--json", action="store_true", help="Emit pretty JSON events instead of NDJSON")
     return parser
 
@@ -184,6 +283,8 @@ def main() -> int:
         ndjson=not args.json,
         cruise_speed_override_kmh=args.override_mission_cruise_kmh,
         payload_override_g=args.override_payload_g,
+        organic_engine_override=args.organic_engine,
+        disable_organic=args.disable_organic,
     )
 
 

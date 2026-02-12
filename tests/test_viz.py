@@ -23,6 +23,7 @@ class VizTests(unittest.TestCase):
                 geometry=geometry,
                 airfoil_coordinates=airfoil.coordinates,
                 output_path=out,
+                dihedral_profile=((0.0, 2.0), (0.35, 5.0), (0.7, 8.0), (1.0, 4.0)),
             )
             self.assertEqual(export_path, out)
             self.assertTrue(out.exists())

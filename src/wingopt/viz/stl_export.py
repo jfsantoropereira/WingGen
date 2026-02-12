@@ -149,6 +149,7 @@ def _section_at_y(
     geometry: WingGeometry,
     y: float,
     profile_xy: list[tuple[float, float]],
+    dihedral_integral: tuple[tuple[float, ...], tuple[float, ...]] | None = None,
 ) -> list[tuple[float, float, float]]:
     semi = geometry.wingspan_m / 2.0
     if semi <= 0:
@@ -159,7 +160,12 @@ def _section_at_y(
 
     chord = geometry.root_chord_m + ratio * (geometry.tip_chord_m - geometry.root_chord_m)
     x_qc = y_abs * tan(radians(geometry.sweep_deg))
-    z_dihedral = y_abs * tan(radians(geometry.dihedral_deg))
+    if dihedral_integral is None:
+        z_dihedral = y_abs * tan(radians(geometry.dihedral_deg))
+    else:
+        eta_grid, z_grid = dihedral_integral
+        z_factor = _interp_profile_value(eta_grid, z_grid, ratio)
+        z_dihedral = semi * z_factor
 
     local_incidence_deg = geometry.root_incidence_deg + (
         (geometry.tip_incidence_deg - geometry.root_incidence_deg) * ratio
@@ -183,6 +189,57 @@ def _section_at_y(
         section.append((x_global, y_global, z_global))
 
     return section
+
+
+def _interp_profile_value(
+    x_points: tuple[float, ...],
+    y_points: tuple[float, ...],
+    x: float,
+) -> float:
+    if len(x_points) != len(y_points) or not x_points:
+        raise ValueError("Invalid interpolation profile")
+    if x <= x_points[0]:
+        return y_points[0]
+    if x >= x_points[-1]:
+        return y_points[-1]
+    for i in range(len(x_points) - 1):
+        x0 = x_points[i]
+        x1 = x_points[i + 1]
+        if x0 <= x <= x1:
+            y0 = y_points[i]
+            y1 = y_points[i + 1]
+            if x1 == x0:
+                return y0
+            t = (x - x0) / (x1 - x0)
+            return y0 + t * (y1 - y0)
+    return y_points[-1]
+
+
+def _build_dihedral_integral_profile(
+    dihedral_profile: tuple[tuple[float, float], ...] | None,
+) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
+    if not dihedral_profile:
+        return None
+    ordered = sorted(dihedral_profile, key=lambda item: item[0])
+    eta_points = tuple(item[0] for item in ordered)
+    if abs(eta_points[0]) > 1e-9 or abs(eta_points[-1] - 1.0) > 1e-9:
+        raise ValueError("dihedral_profile must start at eta=0 and end at eta=1")
+    if any(b <= a for a, b in zip(eta_points, eta_points[1:])):
+        raise ValueError("dihedral_profile eta values must be strictly increasing")
+
+    angle_points = tuple(item[1] for item in ordered)
+    samples = 801
+    eta_grid = tuple(i / (samples - 1) for i in range(samples))
+    angle_grid = tuple(_interp_profile_value(eta_points, angle_points, eta) for eta in eta_grid)
+
+    integral: list[float] = [0.0]
+    for i in range(1, len(eta_grid)):
+        d_eta = eta_grid[i] - eta_grid[i - 1]
+        m0 = tan(radians(angle_grid[i - 1]))
+        m1 = tan(radians(angle_grid[i]))
+        integral.append(integral[-1] + 0.5 * d_eta * (m0 + m1))
+
+    return eta_grid, tuple(integral)
 
 
 def _surface_tris(
@@ -320,6 +377,7 @@ def export_wing_stl(
     output_path: str | Path,
     span_sections: int = 81,
     profile_points: int = 161,
+    dihedral_profile: tuple[tuple[float, float], ...] | None = None,
 ) -> Path:
     """Export a watertight high-resolution wing STL using the selected airfoil.
 
@@ -345,13 +403,21 @@ def export_wing_stl(
 
     coords = _dedupe_airfoil(airfoil_coordinates)
     profile = _resample_closed_profile(coords, target_points=profile_points)
+    dihedral_integral = _build_dihedral_integral_profile(dihedral_profile)
 
     semi = geometry.wingspan_m / 2.0
     sections: list[list[tuple[float, float, float]]] = []
     for i in range(span_sections):
         frac = i / (span_sections - 1)
         y = -semi + frac * (2.0 * semi)
-        sections.append(_section_at_y(geometry=geometry, y=y, profile_xy=profile))
+        sections.append(
+            _section_at_y(
+                geometry=geometry,
+                y=y,
+                profile_xy=profile,
+                dihedral_integral=dihedral_integral,
+            )
+        )
 
     triangles: list[Triangle] = []
     for i in range(span_sections - 1):

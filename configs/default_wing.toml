@@ -115,6 +115,35 @@ temperature_c = [-10.0, 45.0]
 altitude_m = [0.0, 3000.0]
 payload_weight_g = [0.0, 400.0]
 
+[organic_refinement]
+enabled = true
+engine = "proxy"
+generations = 18
+population_size = 28
+elite_count = 4
+mutation_rate = 0.30
+crossover_rate = 0.70
+seed = 314
+
+[organic_refinement.dihedral_profile]
+eta_control_points = [0.0, 0.35, 0.70, 1.0]
+angle_bounds_deg = [-3.0, 14.0]
+root_lock_deg = 1.5
+smoothness_weight = 0.25
+
+[organic_refinement.export]
+output_stl = "outputs/best_wing_organic_highres.stl"
+span_sections = 161
+profile_points = 321
+
+[organic_refinement.cfd]
+mesh_tool = "gmsh"
+case_root = "outputs/cfd_cases"
+# Example template:
+# external_runner = "python3 scripts/cfd/mock_external_cfd.py --engine {engine} --input-json {input_json} --output-json {output_json}"
+external_runner = ""
+result_file = "result.json"
+
 [optimizer.wing]
 method = "grid_search"
 max_evaluations = 120

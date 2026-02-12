@@ -44,6 +44,21 @@ type ResultPayload = {
 	iterations: Array<{iteration: number; best_combined_score: number; best_weighted_range_km: number}>;
 	top_wing_candidates: Array<{airfoil: string; score: number; cruise_ld: number; stall_speed_kmh: number}>;
 	top_propulsion_candidates: Array<{motor_name: string; prop_name: string; score: number; weighted_range_km: number}>;
+	organic_refinement?: {
+		baseline_dihedral_deg: number;
+		best_candidate: {
+			effective_dihedral_deg: number;
+			score: number;
+			feasible: boolean;
+			source: string;
+			drag_coefficient: number;
+			lift_to_drag: number;
+			trim_elevon_deg: number;
+			static_margin: number;
+			dihedral_profile: Array<{eta: number; angle_deg: number}>;
+		};
+		generations: Array<{generation: number; feasible_count: number; best_score: number}>;
+	} | null;
 	airfoil_comparison: Array<{
 		airfoil: string;
 		evaluated_count: number;
@@ -53,7 +68,7 @@ type ResultPayload = {
 		best_static_margin: number;
 		best_stall_speed_kmh: number;
 	}>;
-	artifacts: {stl_file: string};
+	artifacts: {stl_file: string; baseline_stl_file?: string | null; organic_stl_file?: string | null};
 };
 
 const formatNumber = (value: number, digits = 2): string => {
@@ -309,6 +324,23 @@ const App: React.FC = () => {
 							</Text>
 						))}
 					</Box>
+					{result.organic_refinement ? (
+						<>
+							<Newline />
+							<Box borderStyle="round" borderColor="yellowBright" flexDirection="column" paddingX={1}>
+								<Text color="yellowBright">Organic Pass-2 Refinement</Text>
+									<Text>
+										Baseline dihedral {formatNumber(result.organic_refinement.baseline_dihedral_deg)} deg to effective {formatNumber(result.organic_refinement.best_candidate.effective_dihedral_deg)} deg
+									</Text>
+								<Text>
+									Source {result.organic_refinement.best_candidate.source} · feasible {String(result.organic_refinement.best_candidate.feasible)} · score {formatNumber(result.organic_refinement.best_candidate.score, 1)}
+								</Text>
+								<Text>
+									CD {formatNumber(result.organic_refinement.best_candidate.drag_coefficient, 4)} · L/D {formatNumber(result.organic_refinement.best_candidate.lift_to_drag, 2)} · SM {formatNumber(result.organic_refinement.best_candidate.static_margin * 100, 1)}%
+								</Text>
+							</Box>
+						</>
+					) : null}
 				</>
 			) : null}
 			<Newline />

@@ -33,6 +33,18 @@ The tool should answer: **Given a target mission (range, speed, payload), what w
 - Airfoil must support both single selection and candidate set evaluation during optimization.
 - Optimization must be decomposed into separate wing and propulsion optimizers coordinated by a higher-level routine.
 
+## 1.3 Two-Pass Organic Refinement Requirement
+
+- The optimization pipeline must run in **two explicit passes**:
+  - Pass 1: existing coupled wing + propulsion optimization (global coarse search).
+  - Pass 2: local **organic wing refinement** around the best Pass-1 design.
+- Pass 2 must support **spanwise-varying (non-constant) dihedral** with smooth, bird-like curvature instead of a single constant angle.
+- Pass 2 must be **evolutionary** (population-based mutation/crossover/selection) and preserve all hard constraints (stability, control authority, mass, and structural checks).
+- The final manufacturing artifact must be a **high-resolution watertight STL** generated from the refined organic geometry.
+- The CFD engine used for Pass 2 must be pluggable:
+  - fast proxy mode for local development/CI,
+  - high-fidelity external solver mode for production refinement.
+
 ---
 
 ## 2. Reference Design (Baseline Constraints)
@@ -128,6 +140,32 @@ These values are baseline defaults (not hardcoded limits). The optimizer explore
   - `coordinator`: couples both optimizers and converges integrated designs.
 - A single monolithic optimizer implementation is not allowed.
 
+### 3.2 Two-Step Optimization Architecture
+
+```
+Pass 1 (existing):
+  wing_optimizer + propulsion_optimizer + coordinator
+      -> best integrated baseline design D0
+
+Pass 2 (new):
+  organic_refiner(D0)
+      - evolutionary search on spanwise dihedral profile
+      - CFD/proxy evaluation
+      - constraint filtering
+      -> refined organic design D1
+
+Export:
+  high-resolution, watertight STL from D1
+```
+
+- Pass 1 remains responsible for global design-space exploration.
+- Pass 2 is a bounded local refinement around D0 to avoid destabilizing globally good solutions.
+- Pass 2 must emit traceable metadata:
+  - dihedral control points,
+  - CFD/proxy metrics per generation,
+  - feasibility and objective progression,
+  - final STL export settings.
+
 ---
 
 ## 4. Module Specifications
@@ -141,8 +179,9 @@ These values are baseline defaults (not hardcoded limits). The optimizer explore
 - `c_r` — root chord [m]
 - `c_t` — tip chord [m] (or taper ratio λ = c_t / c_r)
 - `sweep` — quarter-chord sweep angle Λ [deg]
-- `dihedral` — wing dihedral angle Γ [deg]
-- `twist` — washout angle ε [deg] (linear root-to-tip)
+- `dihedral` — baseline constant dihedral angle Γ [deg] (Pass 1)
+- `root_incidence_deg`, `tip_incidence_deg` — root/tip incidence for washout modeling
+- `dihedral_profile_ctrl` — spanwise control points for non-constant dihedral (Pass 2)
 - `elevon_span_frac` — fraction of semi-span occupied by elevons
 - `elevon_chord_frac` — fraction of local chord occupied by elevon
 - `split_ratio` — inner/outer elevon split (0.5 = equal)
@@ -154,6 +193,7 @@ These values are baseline defaults (not hardcoded limits). The optimizer explore
 - Taper ratio λ
 - Chord distribution c(y) along span
 - Quarter-chord line coordinates
+- Spanwise dihedral profile Γ(η) and integrated wing z-offset z(η)
 - Elevon geometry (4 surfaces: positions, areas, moment arms)
 - Planform plot
 
@@ -419,6 +459,80 @@ For given cruise speed V_cruise:
 - Physics/optimization modules remain Python and do not contain terminal rendering code.
 - Interface between UI and simulation core must be explicit (CLI contract, JSON I/O, or IPC), versioned, and testable.
 
+### 4.11 Organic Refinement Module (`src/wingopt/organic/`)
+
+**Purpose**: Perform a second-pass local optimization that morphs the best baseline wing into a smooth non-planar organic shape while preserving stability and manufacturability.
+
+**Inputs**:
+- Baseline winner `D0` from the coordinator (geometry + propulsion + constraints).
+- Organic refinement config (`generations`, `population`, `mutation_rate`, solver mode, STL resolution).
+- CFD solver interface choice (`proxy`, `su2`, `openfoam`, or `dafoam`).
+
+**Design variables (Pass 2)**:
+- Spanwise dihedral control points in normalized semi-span space `η = y / (b/2)`:
+  - `Γ_root`, `Γ_mid1`, `Γ_mid2`, `Γ_tip` [deg]
+- Optional shape-smoothness/curvature controls:
+  - `curvature_weight`, `tip_relaxation`, `root_lock_strength`.
+
+**Parameterization requirement**:
+- `Γ(η)` must be represented by a smooth curve (cubic spline or monotone piecewise-cubic).
+- Wing z-offset must be computed by integrating local dihedral:  
+  `z(η) = (b/2) * ∫[0..η] tan(Γ(ξ)) dξ`
+- Hard geometry guards:
+  - `|Γ(η)|` bounded by config,
+  - monotonicity optional (enabled by config),
+  - no self-intersections in lofted mesh.
+
+**Evolutionary loop**:
+1. Seed population around `D0` constant dihedral.
+2. Mutate/crossover control points within bounds.
+3. Evaluate each candidate with selected CFD/proxy engine.
+4. Reject infeasible candidates (stability/control/structural constraints).
+5. Rank by multi-objective score (drag, stability margin, control effort, structural penalty).
+6. Elitist selection + convergence checks.
+
+**Outputs**:
+- Best refined dihedral profile `Γ*(η)`.
+- Generation history (best/median/worst objective, feasibility ratio).
+- CFD/proxy metrics at mission conditions.
+- `best_wing_organic_highres.stl` artifact.
+
+### 4.12 CFD Engine Research and Selection
+
+The second-pass refinement requires a pluggable CFD stack. Based on current open-source ecosystem research:
+
+| Engine | Evidence | Strengths | Risks / Cost | Recommended Role |
+|---|---|---|---|---|
+| SU2 | `https://su2code.github.io/`, `https://su2code.github.io/tutorials/home/` | Open-source (LGPL), built-in adjoint and shape-design tutorials including constrained wing/airfoil optimization | More setup complexity than proxy; external meshing/automation required | **Primary high-fidelity engine** for aerodynamic shape refinement |
+| OpenFOAM (Foundation) | `https://openfoam.org/` | Mature GPL CFD toolbox, broad solver ecosystem, high configurability, strong community adoption | Case setup/meshing complexity; shape optimization requires extra orchestration | **Secondary high-fidelity engine** when team prefers OpenFOAM workflow |
+| DAFoam | `https://dafoam.github.io/` | Open-source adjoint platform for high-fidelity optimization; integrates with OpenFOAM/OpenMDAO; wing tutorials available | Heavier dependency stack; steeper onboarding | **Advanced option** for large design-variable / multidisciplinary campaigns |
+| Gmsh (meshing) | `https://gmsh.info/` | Scriptable/API-driven geometry + meshing; easy CLI automation for pipelines | Mesh quality tuning still required per case | **Default open-source mesher** for SU2/OpenFOAM workflows |
+
+**CFD research basis for non-planar wings**:
+- NASA and AIAA studies report that non-planar geometries can reduce induced drag when traded against wetted-area/profile drag increases and evaluated with adequate wake modeling.  
+  References: `https://ntrs.nasa.gov/citations/19930063219`, `https://ntrs.nasa.gov/citations/19920004781`.
+
+**Engine policy**:
+- Development/CI default: `proxy` mode (fast).
+- Flight-critical candidate confirmation: run `su2` or `openfoam` mode before final acceptance.
+- Keep solver adapter contract stable so engines are swappable without changing optimizer logic.
+
+### 4.13 High-Resolution Manufacturing STL
+
+Final export from Pass 2 must:
+- Use the **refined non-constant dihedral profile**, not only baseline constants.
+- Be watertight and tip-capped.
+- Preserve airfoil leading-edge/trailing-edge shape with high surface sampling.
+- Default high-res settings:
+  - span sections `>= 161`
+  - profile points per section `>= 321`
+  - binary or ASCII STL output with deterministic facet ordering.
+
+Validation gates:
+- Open-edge count = 0.
+- Minimum facet count threshold met.
+- Geometric consistency check between simulated profile and exported profile (max deviation tolerance configured).
+
 ---
 
 ## 5. ML Strategy (Optional, Phase 2)
@@ -493,6 +607,9 @@ For given cruise speed V_cruise:
 - [ ] Architecture remains modular (UI, orchestration, and simulation core separated).
 - [ ] Full parameterization is enforced (wingspan, mass/AUW, temperature, atmosphere, and airfoil candidates with bounds).
 - [ ] Wing and propulsion optimizers are implemented as separate modules with a coordinator.
+- [ ] Two-pass optimization is enforced (`Pass 1 baseline` -> `Pass 2 organic refinement`).
+- [ ] Pass-2 organic refinement supports spanwise non-constant dihedral and emits CFD/proxy evaluation history.
+- [ ] Final artifact includes high-resolution watertight STL from the refined organic geometry.
 
 ### Phase 1 — Foundation (MVP)
 - [ ] Conda-first bootstrap (`environment.yml`, documented activation flow)
@@ -522,6 +639,16 @@ For given cruise speed V_cruise:
 - [ ] Sensitivity analysis (tornado plots)
 - [ ] 3D planform visualization
 - [ ] Ink UI refinement: richer visualization and run history navigation
+
+### Phase 2.5 — Organic Geometry + CFD Coupling
+- [ ] Implement organic refinement module with evolutionary search over dihedral profile control points
+- [ ] Add CFD engine adapter interface (`proxy`, `su2`, `openfoam`, `dafoam`)
+- [ ] Implement fast proxy evaluator for local and CI runs
+- [ ] Implement external-command adapters for SU2/OpenFOAM execution and result parsing
+- [ ] Add mesh pipeline hooks (Gmsh scripts/templates)
+- [ ] Add Pass-2 runtime stages and progress events to UI contract
+- [ ] Produce high-resolution organic STL (`best_wing_organic_highres.stl`)
+- [ ] Add regression tests for profile validity, objective improvement, and STL watertightness
 
 ### Phase 3 — ML Augmentation (Optional)
 - [ ] Training data generation pipeline
@@ -657,6 +784,33 @@ temperature_c = [-10.0, 45.0]
 altitude_m = [0.0, 3000.0]
 payload_weight_g = [0.0, 400.0]
 
+[organic_refinement]
+enabled = true
+engine = "proxy"                           # "proxy" | "su2" | "openfoam" | "dafoam"
+generations = 18
+population_size = 28
+elite_count = 4
+mutation_rate = 0.30
+crossover_rate = 0.70
+seed = 314
+
+[organic_refinement.dihedral_profile]
+eta_control_points = [0.0, 0.35, 0.70, 1.0]
+angle_bounds_deg = [-3.0, 14.0]
+root_lock_deg = 1.5
+smoothness_weight = 0.25
+
+[organic_refinement.export]
+output_stl = "outputs/best_wing_organic_highres.stl"
+span_sections = 161
+profile_points = 321
+
+[organic_refinement.cfd]
+mesh_tool = "gmsh"
+case_root = "outputs/cfd_cases"
+external_runner = ""                       # optional command template for non-proxy engines
+result_file = "result.json"
+
 [optimizer.wing]
 method = "differential_evolution"
 max_evaluations = 1200
@@ -709,3 +863,12 @@ aggregation = "weighted_scenario_mean"   # or "worst_case"
 ### Stability
 - Static margin: `SM = (x_NP - x_CG) / MAC`
 - NP approximation (swept wing): `x_NP ≈ x_AC + ΔNP(sweep, taper)`
+
+### Organic Refinement (Pass 2)
+- Spanwise dihedral profile: `Γ = Γ(η)`, where `η ∈ [0, 1]`
+- Vertical displacement from local dihedral:  
+  `z(η) = (b/2) × ∫[0..η] tan(Γ(ξ)) dξ`
+- Smoothness regularizer (discrete control points):  
+  `R_smooth = Σ (Γ[i+1] - 2Γ[i] + Γ[i-1])²`
+- Example composite objective:  
+  `J = w1*CD + w2*|Cm_trim| + w3*R_smooth + penalties(constraint_violations)`

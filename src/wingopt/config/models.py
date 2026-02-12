@@ -416,6 +416,92 @@ class OptimizerConfig:
 
 
 @dataclass(frozen=True)
+class OrganicDihedralProfileConfig:
+    """Organic dihedral profile controls for pass-2 refinement."""
+
+    eta_control_points: tuple[float, ...]
+    angle_bounds_deg: BoundRange
+    root_lock_deg: float
+    smoothness_weight: float
+
+    def __post_init__(self) -> None:
+        if len(self.eta_control_points) < 3:
+            raise ConfigError("organic_refinement.dihedral_profile.eta_control_points needs >= 3 values")
+        if abs(self.eta_control_points[0]) > 1e-9 or abs(self.eta_control_points[-1] - 1.0) > 1e-9:
+            raise ConfigError("eta_control_points must start at 0.0 and end at 1.0")
+        if any(b <= a for a, b in zip(self.eta_control_points, self.eta_control_points[1:])):
+            raise ConfigError("eta_control_points must be strictly increasing")
+        if self.root_lock_deg < 0:
+            raise ConfigError("root_lock_deg must be >= 0")
+        if self.smoothness_weight < 0:
+            raise ConfigError("smoothness_weight must be >= 0")
+
+
+@dataclass(frozen=True)
+class OrganicExportConfig:
+    """Final artifact export settings for organic refinement."""
+
+    output_stl: str
+    span_sections: int
+    profile_points: int
+
+    def __post_init__(self) -> None:
+        if not self.output_stl:
+            raise ConfigError("organic_refinement.export.output_stl cannot be empty")
+        if self.span_sections < 9:
+            raise ConfigError("organic_refinement.export.span_sections must be >= 9")
+        if self.profile_points < 41:
+            raise ConfigError("organic_refinement.export.profile_points must be >= 41")
+
+
+@dataclass(frozen=True)
+class OrganicCfdConfig:
+    """CFD backend adapter settings."""
+
+    mesh_tool: str
+    case_root: str
+    external_runner: str
+    result_file: str
+
+    def __post_init__(self) -> None:
+        if not self.mesh_tool:
+            raise ConfigError("organic_refinement.cfd.mesh_tool cannot be empty")
+        if not self.case_root:
+            raise ConfigError("organic_refinement.cfd.case_root cannot be empty")
+        if not self.result_file:
+            raise ConfigError("organic_refinement.cfd.result_file cannot be empty")
+
+
+@dataclass(frozen=True)
+class OrganicRefinementConfig:
+    """Configuration for pass-2 evolutionary organic refinement."""
+
+    enabled: bool
+    engine: str
+    generations: int
+    population_size: int
+    elite_count: int
+    mutation_rate: float
+    crossover_rate: float
+    seed: int
+    dihedral_profile: OrganicDihedralProfileConfig
+    export: OrganicExportConfig
+    cfd: OrganicCfdConfig
+
+    def __post_init__(self) -> None:
+        if self.engine not in {"proxy", "su2", "openfoam", "dafoam"}:
+            raise ConfigError("organic_refinement.engine must be proxy, su2, openfoam, or dafoam")
+        if self.generations <= 0 or self.population_size <= 0:
+            raise ConfigError("organic_refinement generations and population_size must be > 0")
+        if not (0 <= self.elite_count < self.population_size):
+            raise ConfigError("organic_refinement.elite_count must be >= 0 and < population_size")
+        if not (0.0 <= self.mutation_rate <= 1.0):
+            raise ConfigError("organic_refinement.mutation_rate must be in [0, 1]")
+        if not (0.0 <= self.crossover_rate <= 1.0):
+            raise ConfigError("organic_refinement.crossover_rate must be in [0, 1]")
+
+
+@dataclass(frozen=True)
 class WingGenConfig:
     """Root simulator configuration."""
 
@@ -429,12 +515,43 @@ class WingGenConfig:
     stability: StabilityConfig
     design_space: DesignSpaceConfig
     optimizer: OptimizerConfig
+    organic_refinement: OrganicRefinementConfig
 
 
 def _bound_from(value: Any, path: str) -> BoundRange:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ConfigError(f"{path} must be [min, max]")
     return BoundRange(float(value[0]), float(value[1]))
+
+
+def _default_organic_refinement() -> OrganicRefinementConfig:
+    return OrganicRefinementConfig(
+        enabled=False,
+        engine="proxy",
+        generations=8,
+        population_size=16,
+        elite_count=2,
+        mutation_rate=0.25,
+        crossover_rate=0.70,
+        seed=314,
+        dihedral_profile=OrganicDihedralProfileConfig(
+            eta_control_points=(0.0, 0.35, 0.70, 1.0),
+            angle_bounds_deg=BoundRange(-3.0, 14.0),
+            root_lock_deg=1.5,
+            smoothness_weight=0.25,
+        ),
+        export=OrganicExportConfig(
+            output_stl="outputs/best_wing_organic_highres.stl",
+            span_sections=161,
+            profile_points=321,
+        ),
+        cfd=OrganicCfdConfig(
+            mesh_tool="gmsh",
+            case_root="outputs/cfd_cases",
+            external_runner="",
+            result_file="result.json",
+        ),
+    )
 
 
 def build_config(raw: dict[str, Any]) -> WingGenConfig:
@@ -580,6 +697,96 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
             propulsion=OptimizerSettings(**opt_raw["propulsion"]),
             coordinator=CoordinatorSettings(**opt_raw["coordinator"]),
         )
+
+        organic_raw = raw.get("organic_refinement")
+        if organic_raw is None:
+            organic_refinement = _default_organic_refinement()
+        else:
+            default_organic = _default_organic_refinement()
+
+            profile_raw = organic_raw.get("dihedral_profile", {})
+            bounds_raw = profile_raw.get(
+                "angle_bounds_deg",
+                [
+                    default_organic.dihedral_profile.angle_bounds_deg.minimum,
+                    default_organic.dihedral_profile.angle_bounds_deg.maximum,
+                ],
+            )
+            dihedral_profile = OrganicDihedralProfileConfig(
+                eta_control_points=tuple(
+                    float(v)
+                    for v in profile_raw.get(
+                        "eta_control_points",
+                        default_organic.dihedral_profile.eta_control_points,
+                    )
+                ),
+                angle_bounds_deg=_bound_from(
+                    bounds_raw,
+                    "organic_refinement.dihedral_profile.angle_bounds_deg",
+                ),
+                root_lock_deg=float(
+                    profile_raw.get(
+                        "root_lock_deg",
+                        default_organic.dihedral_profile.root_lock_deg,
+                    )
+                ),
+                smoothness_weight=float(
+                    profile_raw.get(
+                        "smoothness_weight",
+                        default_organic.dihedral_profile.smoothness_weight,
+                    )
+                ),
+            )
+
+            export_raw = organic_raw.get("export", {})
+            export_cfg = OrganicExportConfig(
+                output_stl=str(
+                    export_raw.get("output_stl", default_organic.export.output_stl)
+                ),
+                span_sections=int(
+                    export_raw.get("span_sections", default_organic.export.span_sections)
+                ),
+                profile_points=int(
+                    export_raw.get("profile_points", default_organic.export.profile_points)
+                ),
+            )
+
+            cfd_raw = organic_raw.get("cfd", {})
+            cfd_cfg = OrganicCfdConfig(
+                mesh_tool=str(cfd_raw.get("mesh_tool", default_organic.cfd.mesh_tool)),
+                case_root=str(cfd_raw.get("case_root", default_organic.cfd.case_root)),
+                external_runner=str(
+                    cfd_raw.get("external_runner", default_organic.cfd.external_runner)
+                ),
+                result_file=str(cfd_raw.get("result_file", default_organic.cfd.result_file)),
+            )
+
+            organic_refinement = OrganicRefinementConfig(
+                enabled=bool(organic_raw.get("enabled", default_organic.enabled)),
+                engine=str(organic_raw.get("engine", default_organic.engine)).lower(),
+                generations=int(
+                    organic_raw.get("generations", default_organic.generations)
+                ),
+                population_size=int(
+                    organic_raw.get(
+                        "population_size",
+                        default_organic.population_size,
+                    )
+                ),
+                elite_count=int(
+                    organic_raw.get("elite_count", default_organic.elite_count)
+                ),
+                mutation_rate=float(
+                    organic_raw.get("mutation_rate", default_organic.mutation_rate)
+                ),
+                crossover_rate=float(
+                    organic_raw.get("crossover_rate", default_organic.crossover_rate)
+                ),
+                seed=int(organic_raw.get("seed", default_organic.seed)),
+                dihedral_profile=dihedral_profile,
+                export=export_cfg,
+                cfd=cfd_cfg,
+            )
     except KeyError as exc:
         raise ConfigError(f"Missing required configuration section/key: {exc}") from exc
     except TypeError as exc:
@@ -596,4 +803,5 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
         stability=stability,
         design_space=design_space,
         optimizer=optimizer,
+        organic_refinement=organic_refinement,
     )
