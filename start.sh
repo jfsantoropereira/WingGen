@@ -4,13 +4,22 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ROOT_DIR}/environment.yml"
 PID_FILE="${ROOT_DIR}/.winggen.pid"
+STUDIO_PID_FILE="${ROOT_DIR}/.winggen.studio.pid"
 UI_DIR="${ROOT_DIR}/ui/terminal"
 ENV_NAME="winggen"
 DAEMON_MODE=0
+STUDIO_MODE=0
 
-if [[ "${1:-}" == "--daemon" ]]; then
-  DAEMON_MODE=1
-fi
+for arg in "$@"; do
+  case "${arg}" in
+    --daemon) DAEMON_MODE=1 ;;
+    --studio) STUDIO_MODE=1 ;;
+    *)
+      echo "Unknown option: ${arg} (supported: --studio, --daemon)" >&2
+      exit 1
+      ;;
+  esac
+done
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "conda is required but not found in PATH" >&2
@@ -20,6 +29,37 @@ fi
 if ! conda env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
   echo "Creating conda environment '${ENV_NAME}' from ${ENV_FILE}..."
   conda env create -f "${ENV_FILE}"
+fi
+
+if [[ ${STUDIO_MODE} -eq 1 ]]; then
+  STUDIO_CMD=(conda run --no-capture-output -n "${ENV_NAME}" \
+    python -m wingopt.studio --config "${ROOT_DIR}/configs/default_wing.toml")
+  cd "${ROOT_DIR}"
+  export PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
+  if [[ ${DAEMON_MODE} -eq 1 ]]; then
+    if [[ -f "${STUDIO_PID_FILE}" ]]; then
+      existing_pid="$(cat "${STUDIO_PID_FILE}")"
+      if kill -0 "${existing_pid}" >/dev/null 2>&1; then
+        echo "WingGen Studio is already running (PID ${existing_pid}). Use ./stop.sh first." >&2
+        exit 1
+      fi
+      rm -f "${STUDIO_PID_FILE}"
+    fi
+
+    echo "Starting WingGen Studio server in daemon mode..."
+    "${STUDIO_CMD[@]}" >"${ROOT_DIR}/.winggen.studio.log" 2>&1 &
+    pid="$!"
+    echo "${pid}" > "${STUDIO_PID_FILE}"
+
+    echo "WingGen Studio started in background (PID ${pid})."
+    echo "Logs: ${ROOT_DIR}/.winggen.studio.log"
+    echo "Use ./stop.sh to stop."
+    exit 0
+  fi
+
+  echo "Starting WingGen Studio server in interactive mode..."
+  exec "${STUDIO_CMD[@]}"
 fi
 
 if [[ ! -f "${UI_DIR}/package.json" ]]; then
