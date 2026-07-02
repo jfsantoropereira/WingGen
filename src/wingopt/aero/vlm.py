@@ -331,7 +331,15 @@ def _segment_velocity_backend(xp: Any, point: Any, a_point: Any, b_point: Any) -
     r1 = point - a_point
     r2 = point - b_point
     r0 = b_point - a_point
-    cross = xp.cross(r1, r2, axis=-1)
+    # Manual cross product: mlx.core has no ``cross``; identical math on numpy.
+    cross = xp.stack(
+        (
+            r1[..., 1] * r2[..., 2] - r1[..., 2] * r2[..., 1],
+            r1[..., 2] * r2[..., 0] - r1[..., 0] * r2[..., 2],
+            r1[..., 0] * r2[..., 1] - r1[..., 1] * r2[..., 0],
+        ),
+        axis=-1,
+    )
     cross_sq = (cross * cross).sum(axis=-1)
     r1_norm = xp.sqrt((r1 * r1).sum(axis=-1))
     r2_norm = xp.sqrt((r2 * r2).sum(axis=-1))

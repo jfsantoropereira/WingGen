@@ -72,11 +72,15 @@ class ArrayOps:
     module: Any
 
     def asarray(self, values: Any) -> Any:
-        """Convert values to a backend float array."""
+        """Convert values to a backend float array.
+
+        MLX arrays are created as ``float32`` because the MLX Metal GPU
+        backend does not support ``float64`` compute; the final linear solve
+        still runs in NumPy ``float64`` (see :func:`solve_linear`).
+        """
 
         if self.backend == "mlx":
-            dtype = getattr(self.module, "float64", self.module.float32)
-            return self.module.array(values, dtype=dtype)
+            return self.module.array(np.asarray(values, dtype=np.float32))
         return self.module.asarray(values, dtype=np.float64)
 
     def to_numpy(self, values: Any) -> ArrayLike:
