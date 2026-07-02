@@ -34,6 +34,8 @@ export function createJobsView(selectedJobId?: string): View {
   const pointsTableBody = el('tbody');
   const pointsTableHead = el('thead');
   let pointRowCount = 0;
+  // Streams may replay history after a reconnect; dedupe rows by point index.
+  const seenPointIndices = new Set<number>();
 
   const progressStage = el('span', { class: 'mono' }, '—');
   const progressNote = el('span', { class: 'muted mono' }, '');
@@ -99,6 +101,8 @@ export function createJobsView(selectedJobId?: string): View {
         ),
       );
     }
+    if (seenPointIndices.has(payload.index)) return;
+    seenPointIndices.add(payload.index);
     if (pointRowCount >= MAX_POINT_ROWS) return;
     pointRowCount += 1;
     pointsTableBody.appendChild(
