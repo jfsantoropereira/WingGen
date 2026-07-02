@@ -50,6 +50,45 @@ class VlmTests(unittest.TestCase):
             )
         )
 
+    def test_chordwise_convergence_of_cl_np_and_cdi(self) -> None:
+        """Coefficients must be grid-converged, not resolution-dependent.
+
+        Guards against missing-wake / mis-placed-ring formulations, whose CL
+        and neutral point drift monotonically with chordwise refinement.
+        """
+        geometry = self._geometry()
+        coarse = VlmSolver(
+            VlmSettings(spanwise_panels=32, chordwise_panels=6, backend="numpy")
+        ).solve(geometry, alpha_deg=4.0)
+        fine = VlmSolver(
+            VlmSettings(spanwise_panels=32, chordwise_panels=18, backend="numpy")
+        ).solve(geometry, alpha_deg=4.0)
+        self.assertLess(abs(fine.cl - coarse.cl) / abs(fine.cl), 0.02)
+        self.assertLess(abs(fine.cdi - coarse.cdi) / abs(fine.cdi), 0.05)
+        self.assertLess(
+            abs(fine.neutral_point_x_m - coarse.neutral_point_x_m) / geometry.mac_m, 0.02
+        )
+
+    def test_rectangular_neutral_point_near_quarter_chord(self) -> None:
+        geometry = self._geometry()
+        result = VlmSolver(
+            VlmSettings(spanwise_panels=32, chordwise_panels=12, backend="numpy")
+        ).solve(geometry, alpha_deg=4.0)
+        chord_fraction = result.neutral_point_x_m / geometry.root_chord_m
+        self.assertGreater(chord_fraction, 0.21)
+        self.assertLess(chord_fraction, 0.27)
+
+    def test_trefftz_span_efficiency_without_clamping(self) -> None:
+        """Induced drag must come from the wake, not an analytic floor."""
+        geometry = self._geometry()
+        result = VlmSolver(
+            VlmSettings(spanwise_panels=48, chordwise_panels=8, backend="numpy")
+        ).solve(geometry, alpha_deg=4.0)
+        oswald = result.cl**2 / (pi * geometry.aspect_ratio * result.cdi)
+        self.assertGreater(result.cdi, 0.0)
+        self.assertGreater(oswald, 0.85)
+        self.assertLess(oswald, 1.05)
+
     def test_rectangular_ar8_matches_lifting_line_estimate(self) -> None:
         geometry = self._geometry()
         result = VlmSolver(

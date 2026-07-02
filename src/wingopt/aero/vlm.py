@@ -42,17 +42,26 @@ class VlmResult:
 
 @dataclass(frozen=True)
 class _Lattice:
-    """Discretized VLM panel geometry arrays."""
+    """Discretized VLM panel and wake geometry arrays.
 
-    corners: FloatArray
+    ``rings`` are the vortex rings displaced a quarter panel downstream of the
+    panel edges (Katz & Plotkin ch. 12); ``wake_rings`` extend the trailing-edge
+    ring row far downstream so the trailing-edge rings shed their circulation
+    into the wake (discrete Kutta condition).
+    """
+
+    rings: FloatArray          # (n_panels, 4, 3) ring corners
+    wake_rings: FloatArray     # (n_strips, 4, 3) wake ring corners
+    te_indices: FloatArray     # (n_strips,) int — panel index of each TE ring
+    upstream_index: FloatArray  # (n_panels,) int — chordwise upstream panel or -1
     controls: FloatArray
     normals: FloatArray
     span_widths: FloatArray
-    panel_area: FloatArray
     chord: FloatArray
-    eta: FloatArray
-    bound_left: FloatArray
+    eta: FloatArray            # per-panel strip midpoint eta in [-1, 1]
+    bound_left: FloatArray     # ring leading-segment endpoints (panel c/4 line)
     bound_right: FloatArray
+    te_edge_points: FloatArray  # (n_strips + 1, 3) wing TE points per strip edge
 
 
 class VlmSolver:
@@ -130,26 +139,38 @@ class VlmSolver:
         lattice = _build_lattice(
             geometry, self.settings, dihedral_profile, airfoil_camber, elevon_deg
         )
-        freestream = np.array(
-            [cos(radians(alpha_deg)), 0.0, -np.sin(radians(alpha_deg))], dtype=np.float64
-        )
-        aic = self._build_aic(lattice.controls, lattice.normals, lattice.corners)
+        alpha_rad = radians(alpha_deg)
+        freestream = np.array([cos(alpha_rad), 0.0, -np.sin(alpha_rad)], dtype=np.float64)
+        aic = self._build_aic(lattice)
         rhs = -lattice.normals @ freestream
         gamma = solve_linear(aic, rhs)
-        return _coefficients(geometry, lattice, gamma, freestream, self.backend)
+        return _coefficients(geometry, lattice, gamma, alpha_rad, self.backend)
 
-    def _build_aic(
-        self, controls: FloatArray, normals: FloatArray, corners: FloatArray
-    ) -> FloatArray:
-        """Assemble the dense aerodynamic influence coefficient matrix."""
+    def _build_aic(self, lattice: _Lattice) -> FloatArray:
+        """Assemble the dense AIC including wake-ring shedding columns.
 
-        cp = self._ops.asarray(controls)
-        nn = self._ops.asarray(normals)
-        cc = self._ops.asarray(corners)
+        Each trailing-edge ring's column also carries its wake ring's
+        influence, because both share the same circulation (steady Kutta
+        condition).
+        """
+
+        cp = self._ops.asarray(lattice.controls)
+        nn = self._ops.asarray(lattice.normals)
+        rings = self._ops.asarray(lattice.rings)
+        wake = self._ops.asarray(lattice.wake_rings)
         xp = self._ops.module
-        induced = _ring_velocity_backend(xp, cp[:, None, :], cc[None, :, :, :])
-        aic = (induced * nn[:, None, :]).sum(axis=2)
-        return self._ops.to_numpy(aic)
+        induced = _ring_velocity_backend(xp, cp[:, None, :], rings[None, :, :, :])
+        aic = self._ops.to_numpy((induced * nn[:, None, :]).sum(axis=2))
+        wake_induced = _ring_velocity_backend(xp, cp[:, None, :], wake[None, :, :, :])
+        wake_aic = self._ops.to_numpy((wake_induced * nn[:, None, :]).sum(axis=2))
+        te_columns = np.asarray(lattice.te_indices, dtype=np.int64)
+        aic[:, te_columns] += wake_aic
+        return aic
+
+
+#: Wake length in wingspans; far enough for converged influence, close enough
+#: to stay accurate in the float32 MLX path.
+_WAKE_SPANS = 25.0
 
 
 def _build_lattice(
@@ -159,57 +180,96 @@ def _build_lattice(
     airfoil_camber: tuple[tuple[float, float], ...] | None,
     elevon_deg: float,
 ) -> _Lattice:
-    """Build panel geometry on the mean camber surface."""
+    """Build vortex rings, controls, and wake on the mean camber surface.
+
+    Rings are displaced a quarter panel-chord downstream of the panel edges,
+    with control points at the panel three-quarter chord (Katz & Plotkin
+    ch. 12.3). The trailing-edge ring row extends a quarter panel beyond the
+    trailing edge, and one wake ring per span strip carries the trailing-edge
+    circulation ``_WAKE_SPANS`` spans downstream.
+    """
 
     ns = settings.spanwise_panels
     nc = settings.chordwise_panels
     b2 = 0.5 * geometry.wingspan_m
     y_edges = np.linspace(-b2, b2, ns + 1, dtype=np.float64)
     x_edges = np.linspace(0.0, 1.0, nc + 1, dtype=np.float64)
+    dx = 1.0 / nc
+    # Ring chordwise stations: panel edges shifted a quarter panel downstream.
+    x_rings = x_edges + 0.25 * dx
 
-    corners = np.empty((ns * nc, 4, 3), dtype=np.float64)
-    controls = np.empty((ns * nc, 3), dtype=np.float64)
-    normals = np.empty((ns * nc, 3), dtype=np.float64)
-    span_widths = np.empty(ns * nc, dtype=np.float64)
-    panel_area = np.empty(ns * nc, dtype=np.float64)
-    chord = np.empty(ns * nc, dtype=np.float64)
-    eta = np.empty(ns * nc, dtype=np.float64)
-    bound_left = np.empty((ns * nc, 3), dtype=np.float64)
-    bound_right = np.empty((ns * nc, 3), dtype=np.float64)
+    n_panels = ns * nc
+    rings = np.empty((n_panels, 4, 3), dtype=np.float64)
+    controls = np.empty((n_panels, 3), dtype=np.float64)
+    normals = np.empty((n_panels, 3), dtype=np.float64)
+    span_widths = np.empty(n_panels, dtype=np.float64)
+    chord = np.empty(n_panels, dtype=np.float64)
+    eta = np.empty(n_panels, dtype=np.float64)
+    bound_left = np.empty((n_panels, 3), dtype=np.float64)
+    bound_right = np.empty((n_panels, 3), dtype=np.float64)
+    upstream_index = np.empty(n_panels, dtype=np.int64)
+    te_indices = np.empty(ns, dtype=np.int64)
+    wake_rings = np.empty((ns, 4, 3), dtype=np.float64)
+    te_edge_points = np.empty((ns + 1, 3), dtype=np.float64)
+
+    wake_dx = _WAKE_SPANS * geometry.wingspan_m
+
+    def surf(y_m: float, xf: float) -> FloatArray:
+        return _surface_point(geometry, y_m, xf, dihedral_profile, airfoil_camber, elevon_deg)
+
+    for i_edge, y_m in enumerate(y_edges):
+        te_edge_points[i_edge] = surf(y_m, 1.0)
 
     index = 0
     for i_span in range(ns):
         yl = y_edges[i_span]
         yr = y_edges[i_span + 1]
+        y_mid = 0.5 * (yl + yr)
         for i_chord in range(nc):
-            xl = x_edges[i_chord]
-            xr = x_edges[i_chord + 1]
-            p00 = _surface_point(geometry, yl, xl, dihedral_profile, airfoil_camber, elevon_deg)
-            p10 = _surface_point(geometry, yl, xr, dihedral_profile, airfoil_camber, elevon_deg)
-            p11 = _surface_point(geometry, yr, xr, dihedral_profile, airfoil_camber, elevon_deg)
-            p01 = _surface_point(geometry, yr, xl, dihedral_profile, airfoil_camber, elevon_deg)
-            corners[index] = np.array([p00, p10, p11, p01], dtype=np.float64)
-            y_mid = 0.5 * (yl + yr)
-            x_control = xl + 0.75 * (xr - xl)
-            controls[index] = _surface_point(
-                geometry, y_mid, x_control, dihedral_profile, airfoil_camber, elevon_deg
-            )
+            xa = x_rings[i_chord]
+            xb = x_rings[i_chord + 1]
+            q00 = surf(yl, xa)
+            q10 = surf(yl, xb)
+            q11 = surf(yr, xb)
+            q01 = surf(yr, xa)
+            rings[index] = np.array([q00, q10, q11, q01], dtype=np.float64)
+            controls[index] = surf(y_mid, x_edges[i_chord] + 0.75 * dx)
+            # Normal from the underlying camber-surface panel (not the ring).
+            p00 = surf(yl, x_edges[i_chord])
+            p10 = surf(yl, x_edges[i_chord + 1])
+            p01 = surf(yr, x_edges[i_chord])
             n_vec = np.cross(p10 - p00, p01 - p00)
-            norm = np.linalg.norm(n_vec)
-            normals[index] = n_vec / norm
+            normals[index] = n_vec / np.linalg.norm(n_vec)
             span_widths[index] = yr - yl
-            panel_area[index] = np.linalg.norm(np.cross(p10 - p00, p01 - p00))
             chord[index] = _local_chord(geometry, abs(y_mid) / b2)
             eta[index] = y_mid / b2
-            bound_left[index] = _surface_point(
-                geometry, yl, xl + 0.25 * (xr - xl), dihedral_profile, airfoil_camber, elevon_deg
-            )
-            bound_right[index] = _surface_point(
-                geometry, yr, xl + 0.25 * (xr - xl), dihedral_profile, airfoil_camber, elevon_deg
-            )
+            bound_left[index] = q00
+            bound_right[index] = q01
+            upstream_index[index] = index - 1 if i_chord > 0 else -1
             index += 1
+        te_index = index - 1
+        te_indices[i_span] = te_index
+        te_left = rings[te_index, 1]
+        te_right = rings[te_index, 2]
+        far_left = te_left + np.array([wake_dx, 0.0, 0.0])
+        far_right = te_right + np.array([wake_dx, 0.0, 0.0])
+        # Corner order mirrors the panel rings so the shared segment between
+        # the TE ring and its wake ring cancels at equal circulation.
+        wake_rings[i_span] = np.array([te_left, far_left, far_right, te_right], dtype=np.float64)
+
     return _Lattice(
-        corners, controls, normals, span_widths, panel_area, chord, eta, bound_left, bound_right
+        rings=rings,
+        wake_rings=wake_rings,
+        te_indices=te_indices,
+        upstream_index=upstream_index,
+        controls=controls,
+        normals=normals,
+        span_widths=span_widths,
+        chord=chord,
+        eta=eta,
+        bound_left=bound_left,
+        bound_right=bound_right,
+        te_edge_points=te_edge_points,
     )
 
 
@@ -225,7 +285,9 @@ def _surface_point(
 
     eta_abs = abs(y_m) / (0.5 * geometry.wingspan_m)
     chord = _local_chord(geometry, eta_abs)
-    x_qc = abs(y_m) * tan(radians(geometry.sweep_deg))
+    # Root leading edge is the coordinate origin; the quarter-chord line
+    # starts at 0.25 * root chord and sweeps aft.
+    x_qc = 0.25 * geometry.root_chord_m + abs(y_m) * tan(radians(geometry.sweep_deg))
     x_le = x_qc - 0.25 * chord
     x_m = x_le + x_fraction * chord
     incidence = radians(
@@ -352,79 +414,93 @@ def _coefficients(
     geometry: WingGeometry,
     lattice: _Lattice,
     gamma: FloatArray,
-    freestream: FloatArray,
+    alpha_rad: float,
     backend: str,
 ) -> VlmResult:
-    """Integrate circulation into force, moment, drag, and spanload coefficients."""
+    """Integrate ring circulation into force, moment, drag, and spanload.
 
-    effective_gamma = gamma * _chordwise_circulation_factor(lattice)
+    Near-field lift and moment come from Kutta-Joukowski on each ring's
+    leading (bound) segment carrying the ring-difference circulation
+    ``gamma_i - gamma_upstream``. Induced drag comes from a discrete
+    Trefftz-plane evaluation of the shed wake (Katz & Plotkin ch. 8/12),
+    which supports non-planar (dihedral) geometry.
+    """
+
+    freestream = np.array([cos(alpha_rad), 0.0, -np.sin(alpha_rad)], dtype=np.float64)
+    upstream = np.asarray(lattice.upstream_index, dtype=np.int64)
+    gamma_bound = gamma.copy()
+    has_upstream = upstream >= 0
+    gamma_bound[has_upstream] -= gamma[upstream[has_upstream]]
+
     forces = (
         np.cross(
             np.broadcast_to(freestream, lattice.bound_right.shape),
             lattice.bound_right - lattice.bound_left,
         )
-        * effective_gamma[:, None]
+        * gamma_bound[:, None]
     )
-    lift = forces[:, 2].sum()
+    lift_dir = np.array([np.sin(alpha_rad), 0.0, cos(alpha_rad)], dtype=np.float64)
+    lift = float((forces * lift_dir).sum())
     cl = 2.0 * lift / geometry.area_m2
-    moments = np.cross(lattice.controls, forces)
-    cm = 2.0 * moments[:, 1].sum() / (geometry.area_m2 * geometry.mac_m)
 
-    velocity_matrix = _ring_velocity_numpy(
-        lattice.controls[:, None, :], lattice.corners[None, :, :, :]
-    )
-    induced_velocity = np.tensordot(velocity_matrix, gamma, axes=(1, 0))
-    induced = np.einsum("ij,ij->i", induced_velocity, lattice.normals)
-    raw_cdi = -2.0 * np.sum(effective_gamma * induced * lattice.span_widths) / geometry.area_m2
-    trefftz_e = _span_efficiency(geometry, lattice, effective_gamma)
-    cdi = max(raw_cdi, cl * cl / (pi * geometry.aspect_ratio * trefftz_e))
-    eta, loading = _span_loading(geometry, lattice, effective_gamma)
+    bound_mid = 0.5 * (lattice.bound_left + lattice.bound_right)
+    moments = np.cross(bound_mid, forces)
+    cm = 2.0 * float(moments[:, 1].sum()) / (geometry.area_m2 * geometry.mac_m)
+
+    cdi = _trefftz_cdi(geometry, lattice, gamma)
+    eta, loading = _span_loading(geometry, lattice, gamma)
     return VlmResult(
         float(cl), float(cdi), float(cm), float("nan"), tuple(eta), tuple(loading), backend
     )
 
 
-def _ring_velocity_numpy(point: FloatArray, rings: FloatArray) -> FloatArray:
-    """Evaluate vortex-ring induced velocity with NumPy arrays."""
+def _trefftz_cdi(geometry: WingGeometry, lattice: _Lattice, gamma: FloatArray) -> float:
+    """Discrete Trefftz-plane induced drag from shed trailing vorticity.
 
-    return _ring_velocity_backend(np, point, rings)
+    Strip circulation equals the trailing-edge ring circulation (chordwise ring
+    differences telescope). Trailing vortex filaments sit at the strip-edge
+    trailing-edge points projected onto the y-z plane; each induces a 2-D
+    point-vortex velocity in the Trefftz plane. Induced drag integrates
+    ``Gamma * w_normal`` along the (possibly dihedraled) span trace.
+    """
 
+    te_indices = np.asarray(lattice.te_indices, dtype=np.int64)
+    strip_gamma = gamma[te_indices]
+    edges_yz = lattice.te_edge_points[:, 1:3]  # (ns+1, 2): (y, z)
+    # Trailing filament strengths: circulation jump across each strip edge.
+    padded = np.concatenate(([0.0], strip_gamma, [0.0]))
+    filament = padded[1:] - padded[:-1]  # (ns+1,)
 
-def _chordwise_circulation_factor(lattice: _Lattice) -> float:
-    """Return ring-to-bound circulation correction for chordwise refinement."""
+    mid_yz = 0.5 * (edges_yz[:-1] + edges_yz[1:])  # (ns, 2)
+    strip_vec = edges_yz[1:] - edges_yz[:-1]  # (ns, 2)
+    strip_len = np.linalg.norm(strip_vec, axis=1)
+    # In-plane normal to the span trace (unit), pointing +z for a flat wing.
+    normal = np.stack((-strip_vec[:, 1], strip_vec[:, 0]), axis=1)
+    normal /= np.maximum(strip_len[:, None], _EPS)
 
-    panels_per_station = max(1, int(np.count_nonzero(np.isclose(lattice.eta, lattice.eta[0]))))
-    return min(1.0, 4.0 / panels_per_station)
+    rel = mid_yz[:, None, :] - edges_yz[None, :, :]  # (ns, ns+1, 2)
+    r_sq = (rel * rel).sum(axis=2)
+    # 2-D point vortex: v = Gamma/(2*pi) * (-dz, dy)/r^2 ... perpendicular field.
+    v_y = -rel[:, :, 1] / np.maximum(r_sq, _EPS)
+    v_z = rel[:, :, 0] / np.maximum(r_sq, _EPS)
+    w_y = (v_y * filament[None, :]).sum(axis=1) / (2.0 * pi)
+    w_z = (v_z * filament[None, :]).sum(axis=1) / (2.0 * pi)
+    wash_normal = w_y * normal[:, 0] + w_z * normal[:, 1]
 
-
-def _span_efficiency(geometry: WingGeometry, lattice: _Lattice, gamma: FloatArray) -> float:
-    """Estimate Oswald efficiency from Trefftz-plane spanload smoothness."""
-
-    stations, loading = _span_loading(geometry, lattice, gamma)
-    values = np.asarray(loading, dtype=np.float64)
-    if values.size < 3 or abs(values.sum()) < _EPS:
-        return 0.95
-    eta = np.asarray(stations, dtype=np.float64)
-    elliptic = np.sqrt(np.maximum(0.0, 1.0 - eta * eta))
-    elliptic *= values.sum() / max(float(elliptic.sum()), _EPS)
-    error = float(np.sum((values - elliptic) ** 2) / max(np.sum(elliptic**2), _EPS))
-    return float(np.clip(0.98 / (1.0 + 0.35 * error), 0.75, 1.02))
+    # Di = (rho/2) * sum Gamma_i * w_n_i * ds_i  (unit V, rho): CDi = Di / (q S).
+    di = 0.5 * float(np.sum(strip_gamma * wash_normal * strip_len))
+    return float(2.0 * di / geometry.area_m2)
 
 
 def _span_loading(
     geometry: WingGeometry, lattice: _Lattice, gamma: FloatArray
 ) -> tuple[list[float], list[float]]:
-    """Collapse panel circulation into one loading value per span station."""
+    """Per-strip normalized loading ``cl*c/MAC`` from strip circulation."""
 
-    unique_eta = sorted(set(float(round(v, 12)) for v in lattice.eta))
-    stations: list[float] = []
-    loading: list[float] = []
-    for eta in unique_eta:
-        mask = np.isclose(lattice.eta, eta)
-        gamma_section = float(np.sum(gamma[mask]))
-        chord = float(np.mean(lattice.chord[mask]))
-        stations.append(eta)
-        loading.append(2.0 * gamma_section * chord / geometry.mac_m)
+    te_indices = np.asarray(lattice.te_indices, dtype=np.int64)
+    strip_gamma = gamma[te_indices]
+    stations = [float(lattice.eta[i]) for i in te_indices]
+    loading = [2.0 * float(g) / geometry.mac_m for g in strip_gamma]
     return stations, loading
 
 
