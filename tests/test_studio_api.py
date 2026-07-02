@@ -161,11 +161,16 @@ class HealthAndSchemaTest(StudioApiTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["geometry"]["airfoil"], "mh60")
 
-    def test_root_hint_without_dist(self) -> None:
+    def test_root_serves_ui_or_hint(self) -> None:
+        """Root serves the built frontend when present, else a JSON hint."""
         with TestClient(self.app) as client:
             response = client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("hint", response.json())
+        dist_dir = ROOT / "ui" / "web" / "dist"
+        if dist_dir.is_dir():
+            self.assertIn("text/html", response.headers.get("content-type", ""))
+        else:
+            self.assertIn("hint", response.json())
 
 
 class TomlRoundTripTest(unittest.TestCase):

@@ -1,7 +1,7 @@
 """Propulsion module tests."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from wingopt.config import load_config
 from wingopt.propulsion import PropulsionModel

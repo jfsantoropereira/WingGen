@@ -1,7 +1,7 @@
 """Stability module tests."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from wingopt.aero import AeroModel
 from wingopt.config import load_config

@@ -1,8 +1,8 @@
 """Optimizer stack tests (wing + propulsion + coordinator)."""
 
+import unittest
 from dataclasses import replace
 from pathlib import Path
-import unittest
 
 from wingopt.config import load_config
 from wingopt.optimizer import OptimizationCoordinator, PropulsionOptimizer, WingOptimizer

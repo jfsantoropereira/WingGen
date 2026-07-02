@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import exp
 
-
 R_DRY_AIR = 287.058  # J/(kg*K)
 R_WATER_VAPOR = 461.495  # J/(kg*K)
 G0 = 9.80665  # m/s^2

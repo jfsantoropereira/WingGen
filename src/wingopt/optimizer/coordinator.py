@@ -5,9 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from wingopt.config.models import WingGenConfig
-from wingopt.optimizer.wing_optimizer import AirfoilComparison
 from wingopt.optimizer.propulsion_optimizer import PropulsionCandidate, PropulsionOptimizer
-from wingopt.optimizer.wing_optimizer import WingCandidate, WingOptimizer
+from wingopt.optimizer.wing_optimizer import AirfoilComparison, WingCandidate, WingOptimizer
 
 
 @dataclass(frozen=True)

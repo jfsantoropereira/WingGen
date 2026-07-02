@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from math import sqrt
 from pathlib import Path
-import random
 
 from wingopt.aero.model import AeroModel
 from wingopt.config.models import EnvironmentScenario, WingGenConfig

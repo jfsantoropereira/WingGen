@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from math import atan, degrees, tan, radians
-from pathlib import Path
 import random
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from math import atan, degrees, radians, tan
+from pathlib import Path
 
 from wingopt.config.models import GeometryConfig, WingGenConfig
 from wingopt.geometry.airfoil import AirfoilData, load_airfoil_library

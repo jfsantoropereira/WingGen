@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import pi
-from math import cos, radians, sin, tan
+from math import cos, pi, radians, sin, tan
 from pathlib import Path
 
 from wingopt.geometry.airfoil import AirfoilPoint

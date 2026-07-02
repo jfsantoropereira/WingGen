@@ -1,7 +1,7 @@
 """Tests for TOML configuration loading and validation."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from wingopt.config import ConfigError, load_config
 

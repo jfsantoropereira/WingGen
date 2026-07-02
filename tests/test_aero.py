@@ -1,7 +1,7 @@
 """Aerodynamic model tests."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from wingopt.aero import AeroCondition, AeroModel
 from wingopt.config import load_config

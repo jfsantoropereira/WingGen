@@ -1,9 +1,9 @@
 """STL export tests."""
 
-from pathlib import Path
-from collections import Counter
 import tempfile
 import unittest
+from collections import Counter
+from pathlib import Path
 
 from wingopt.config import load_config
 from wingopt.geometry import compute_planform, load_airfoil_library

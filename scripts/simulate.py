@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, is_dataclass, replace
 import json
-from pathlib import Path
 import sys
+from dataclasses import asdict, is_dataclass, replace
+from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,8 +19,8 @@ from wingopt.config import ConfigError, load_config
 from wingopt.config.models import GeometryConfig
 from wingopt.geometry.airfoil import load_airfoil_coordinates
 from wingopt.geometry.planform import compute_planform
-from wingopt.organic import OrganicRefiner
 from wingopt.optimizer import OptimizationCoordinator
+from wingopt.organic import OrganicRefiner
 from wingopt.viz import export_wing_stl
 
 CONTRACT_VERSION = "1.0.0"
@@ -266,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--organic-engine",
         type=str,
         default=None,
-        choices=["proxy", "su2", "openfoam", "dafoam"],
+        choices=["proxy", "lbm", "su2", "openfoam", "dafoam"],
     )
     parser.add_argument("--disable-organic", action="store_true")
     parser.add_argument("--json", action="store_true", help="Emit pretty JSON events instead of NDJSON")

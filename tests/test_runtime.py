@@ -1,9 +1,9 @@
 """Runtime contract smoke test."""
 
 import json
-from pathlib import Path
 import subprocess
 import unittest
+from pathlib import Path
 
 
 class RuntimeTests(unittest.TestCase):
