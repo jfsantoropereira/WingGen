@@ -32,16 +32,88 @@ FAILED_POINT_SCORE = -1.0e9
 _TOP_DESIGNS = 10
 
 
-def _vlm_stub_note(spec_fidelity: str, emit: EmitFn) -> None:
+def _vlm_fidelity_note(spec_fidelity: str, emit: EmitFn) -> None:
     if spec_fidelity == "vlm":
         emit(
             "progress",
             {
                 "stage": "evaluate",
                 "percent": 10,
-                "note": "vlm fidelity not yet integrated; using polar_llt",
+                "note": "vlm fidelity: enriching each point with vortex-lattice metrics",
             },
         )
+
+
+def _vlm_point_metrics(
+    config: WingGenConfig,
+    wing: WingCandidate,
+    cg_fraction_mac: float,
+) -> dict[str, float]:
+    """Compute vortex-lattice metrics for one sweep point at cruise trim.
+
+    Solves the VLM at two angles of attack to obtain the lift-curve slope,
+    finds the trim angle for the cruise lift coefficient implied by the wing
+    candidate's mass and the first environment scenario, then solves once more
+    at that angle for induced drag and pitching moment. The neutral point is
+    converted to a static margin using the MAC leading-edge position of the
+    trapezoidal planform (quarter-chord sweep convention).
+
+    Returns an empty dict (never raises) if the VLM evaluation fails, so a
+    sweep is never aborted by the enrichment pass.
+    """
+    from math import radians, tan
+
+    try:
+        from wingopt.aero.vlm import VlmSolver
+        from wingopt.geometry.planform import compute_planform
+        from wingopt.utils.atmosphere import build_atmosphere
+        from wingopt.utils.units import g_to_kg, kmh_to_ms
+
+        geometry = compute_planform(config.geometry)
+        scenario = config.environment.resolved_scenarios()[0]
+        atmosphere = build_atmosphere(
+            temperature_c=scenario.temperature_c,
+            altitude_m=scenario.altitude_m,
+            relative_humidity=scenario.relative_humidity,
+            pressure_pa=scenario.pressure_pa,
+        )
+        v_ms = kmh_to_ms(config.mission.cruise_speed_kmh)
+        weight_n = g_to_kg(wing.total_mass_g) * 9.80665
+        q = 0.5 * atmosphere.density_kgm3 * v_ms * v_ms
+        cl_required = weight_n / (q * geometry.area_m2)
+
+        solver = VlmSolver(config.aero.vlm)
+        low = solver.solve(geometry, alpha_deg=2.0)
+        high = solver.solve(geometry, alpha_deg=6.0)
+        slope = (high.cl - low.cl) / 4.0
+        if abs(slope) < 1.0e-9:
+            return {}
+        alpha_trim = 2.0 + (cl_required - low.cl) / slope
+        trimmed = solver.solve(geometry, alpha_deg=alpha_trim)
+
+        # MAC leading edge for the trapezoid (quarter-chord sweep convention).
+        taper = geometry.taper_ratio
+        y_mac = (geometry.wingspan_m / 6.0) * (1.0 + 2.0 * taper) / (1.0 + taper)
+        semi_span = geometry.wingspan_m / 2.0
+        chord_mac = geometry.root_chord_m + (y_mac / semi_span) * (
+            geometry.tip_chord_m - geometry.root_chord_m
+        )
+        x_qc_mac = 0.25 * geometry.root_chord_m + y_mac * tan(radians(geometry.sweep_deg))
+        x_le_mac = x_qc_mac - 0.25 * chord_mac
+        x_cg = x_le_mac + cg_fraction_mac * geometry.mac_m
+        vlm_static_margin = (trimmed.neutral_point_x_m - x_cg) / geometry.mac_m
+
+        return {
+            "vlm_cl_cruise": trimmed.cl,
+            "vlm_cdi_cruise": trimmed.cdi,
+            "vlm_cm_cruise": trimmed.cm,
+            "vlm_alpha_trim_deg": alpha_trim,
+            "vlm_cl_alpha_per_deg": slope,
+            "vlm_neutral_point_x_m": trimmed.neutral_point_x_m,
+            "vlm_static_margin": vlm_static_margin,
+        }
+    except Exception:
+        return {}
 
 
 def _wing_metrics(wing: WingCandidate) -> dict[str, float]:
@@ -111,7 +183,7 @@ class SweepRunner:
             ``(result_payload, run_summary)`` — the contract ``result`` event
             payload and the summary persisted on the run record.
         """
-        _vlm_stub_note(spec.fidelity, self.emit)
+        _vlm_fidelity_note(spec.fidelity, self.emit)
         total = spec.total_points
         progress_stride = max(1, total // 20)
         feasible_points = 0
@@ -186,6 +258,10 @@ class SweepRunner:
             return {}, FAILED_POINT_SCORE, False, "evaluation_failed: wing"
 
         metrics = _wing_metrics(wing)
+        if spec.fidelity == "vlm":
+            metrics.update(
+                _vlm_point_metrics(point_config, wing, cg_fraction_mac=wing.cg_fraction_mac)
+            )
         feasible = wing.feasible
         combined = wing.score
 

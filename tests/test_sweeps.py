@@ -316,8 +316,8 @@ class SweepRunnerTests(_RunnerHarness):
         self.assertGreater(metrics["gross_mass_g"], 0.0)
         self.assertAlmostEqual(designs[0].score, metrics["range_km"])
 
-    def test_vlm_fidelity_stub_note(self) -> None:
-        self._run(
+    def test_vlm_fidelity_enriches_metrics(self) -> None:
+        run_id, _, _ = self._run(
             {
                 "kind": "sweep",
                 "parameters": [{"path": "geometry.wingspan_m", "values": [1.5]}],
@@ -329,7 +329,17 @@ class SweepRunnerTests(_RunnerHarness):
             for event, payload in self.events
             if event == "progress"
         ]
-        self.assertTrue(any("polar_llt" in note for note in notes))
+        self.assertTrue(any("vortex-lattice" in note for note in notes))
+        designs = self.store.list_designs(run_id=run_id)
+        self.assertEqual(len(designs), 1)
+        metrics = designs[0].metrics
+        self.assertIn("vlm_cdi_cruise", metrics)
+        self.assertIn("vlm_static_margin", metrics)
+        self.assertGreater(metrics["vlm_cdi_cruise"], 0.0)
+        self.assertGreater(metrics["vlm_cl_cruise"], 0.0)
+        self.assertGreater(metrics["vlm_cl_alpha_per_deg"], 0.0)
+        self.assertTrue(-10.0 < metrics["vlm_alpha_trim_deg"] < 15.0)
+        self.assertTrue(-0.5 < metrics["vlm_static_margin"] < 0.5)
 
 
 class OptimizeRunnerTests(_RunnerHarness):
