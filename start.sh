@@ -48,8 +48,12 @@ if [[ ${STUDIO_MODE} -eq 1 ]]; then
     fi
 
     echo "Starting WingGen Studio server in daemon mode..."
+    # Job control gives the daemon its own process group so stop.sh can
+    # signal the whole group (conda run wraps the real server in a child).
+    set -m
     "${STUDIO_CMD[@]}" >"${ROOT_DIR}/.winggen.studio.log" 2>&1 &
     pid="$!"
+    set +m
     echo "${pid}" > "${STUDIO_PID_FILE}"
 
     echo "WingGen Studio started in background (PID ${pid})."
