@@ -24,3 +24,7 @@ outputs/
 .DS_Store
 .vscode/
 .idea/
+.winggen.studio.pid
+.winggen.studio.log
+ui/web/node_modules/
+ui/web/dist/
