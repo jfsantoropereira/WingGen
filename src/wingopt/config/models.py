@@ -489,8 +489,8 @@ class OrganicRefinementConfig:
     cfd: OrganicCfdConfig
 
     def __post_init__(self) -> None:
-        if self.engine not in {"proxy", "su2", "openfoam", "dafoam"}:
-            raise ConfigError("organic_refinement.engine must be proxy, su2, openfoam, or dafoam")
+        if self.engine not in {"proxy", "lbm", "su2", "openfoam", "dafoam"}:
+            raise ConfigError("organic_refinement.engine must be proxy, lbm, su2, openfoam, or dafoam")
         if self.generations <= 0 or self.population_size <= 0:
             raise ConfigError("organic_refinement generations and population_size must be > 0")
         if not (0 <= self.elite_count < self.population_size):
@@ -499,6 +499,68 @@ class OrganicRefinementConfig:
             raise ConfigError("organic_refinement.mutation_rate must be in [0, 1]")
         if not (0.0 <= self.crossover_rate <= 1.0):
             raise ConfigError("organic_refinement.crossover_rate must be in [0, 1]")
+
+
+@dataclass(frozen=True)
+class VlmSettings:
+    """Vortex-lattice solver discretization and backend settings.
+
+    Attributes:
+        spanwise_panels: Panels across the full span.
+        chordwise_panels: Panels along the chord.
+        backend: Linear-algebra backend: "auto" picks MLX (Metal GPU) when
+            available, otherwise numpy.
+    """
+
+    spanwise_panels: int = 32
+    chordwise_panels: int = 8
+    backend: str = "auto"
+
+    def __post_init__(self) -> None:
+        if self.spanwise_panels < 4 or self.chordwise_panels < 1:
+            raise ConfigError("aero.vlm panel counts too small")
+        if self.backend not in {"auto", "mlx", "numpy"}:
+            raise ConfigError("aero.vlm.backend must be auto, mlx, or numpy")
+
+
+@dataclass(frozen=True)
+class AeroConfig:
+    """Aerodynamic fidelity-tier selection.
+
+    Attributes:
+        method: "polar_llt" (fast polar-based lifting-line, default) or
+            "vlm" (vortex-lattice method, GPU-accelerated when available).
+        vlm: VLM discretization settings, used when method == "vlm" and for
+            on-demand high-fidelity re-evaluation of candidate designs.
+    """
+
+    method: str = "polar_llt"
+    vlm: VlmSettings = VlmSettings()
+
+    def __post_init__(self) -> None:
+        if self.method not in {"polar_llt", "vlm"}:
+            raise ConfigError("aero.method must be polar_llt or vlm")
+
+
+@dataclass(frozen=True)
+class StudioConfig:
+    """Local web studio server settings.
+
+    Attributes:
+        host: Bind address for the studio server.
+        port: TCP port for the studio server.
+        runs_root: Directory (repo-relative or absolute) holding run records.
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 8151
+    runs_root: str = "outputs/runs"
+
+    def __post_init__(self) -> None:
+        if not (0 < self.port < 65536):
+            raise ConfigError("studio.port must be in (0, 65536)")
+        if not self.runs_root:
+            raise ConfigError("studio.runs_root cannot be empty")
 
 
 @dataclass(frozen=True)
@@ -516,6 +578,8 @@ class WingGenConfig:
     design_space: DesignSpaceConfig
     optimizer: OptimizerConfig
     organic_refinement: OrganicRefinementConfig
+    aero: AeroConfig = AeroConfig()
+    studio: StudioConfig = StudioConfig()
 
 
 def _bound_from(value: Any, path: str) -> BoundRange:
@@ -787,6 +851,23 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
                 export=export_cfg,
                 cfd=cfd_cfg,
             )
+        aero_raw = raw.get("aero", {})
+        vlm_raw = aero_raw.get("vlm", {})
+        aero = AeroConfig(
+            method=str(aero_raw.get("method", "polar_llt")).lower(),
+            vlm=VlmSettings(
+                spanwise_panels=int(vlm_raw.get("spanwise_panels", 32)),
+                chordwise_panels=int(vlm_raw.get("chordwise_panels", 8)),
+                backend=str(vlm_raw.get("backend", "auto")).lower(),
+            ),
+        )
+
+        studio_raw = raw.get("studio", {})
+        studio = StudioConfig(
+            host=str(studio_raw.get("host", "127.0.0.1")),
+            port=int(studio_raw.get("port", 8151)),
+            runs_root=str(studio_raw.get("runs_root", "outputs/runs")),
+        )
     except KeyError as exc:
         raise ConfigError(f"Missing required configuration section/key: {exc}") from exc
     except TypeError as exc:
@@ -804,4 +885,6 @@ def build_config(raw: dict[str, Any]) -> WingGenConfig:
         design_space=design_space,
         optimizer=optimizer,
         organic_refinement=organic_refinement,
+        aero=aero,
+        studio=studio,
     )
