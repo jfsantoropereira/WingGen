@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import shlex
 import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from wingopt.aero import AeroModel
@@ -113,7 +113,11 @@ class ProxyCfdEngine(CfdEngine):
                     source="proxy",
                 )
 
-            feasible = feasible and stability.constraints_satisfied(stability_result) and trim.ld > 0.0
+            feasible = (
+                feasible
+                and stability.constraints_satisfied(stability_result)
+                and trim.ld > 0.0
+            )
             weighted_cd += trim.cd * scenario_weight
             weighted_ld += trim.ld * scenario_weight
             weighted_trim += abs(trim.trim_elevon_deg) * scenario_weight
@@ -299,10 +303,101 @@ class ExternalCommandCfdEngine(CfdEngine):
         (case_dir / "dafoam_case.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+
+class LbmCfdEngine(CfdEngine):
+    """In-process volumetric LBM CFD adapter for organic refinement.
+
+    Stability, trim, and feasibility remain delegated to ``ProxyCfdEngine`` so
+    the organic optimizer keeps the existing constraint semantics. The LBM solve
+    replaces cruise drag and L/D at the configured cruise condition. Default
+    resolution and step count are intentionally coarse for in-loop use; detailed
+    verification should instantiate :class:`wingopt.cfd.lbm.LbmSolver` directly.
+    """
+
+    def __init__(
+        self,
+        config: WingGenConfig,
+        resolution: tuple[int, int, int] = (96, 64, 48),
+        max_steps: int = 1500,
+        backend: str = "auto",
+        alpha_deg: float = 4.0,
+    ) -> None:
+        self.config = config
+        self.proxy = ProxyCfdEngine(config=config)
+        self.resolution = resolution
+        self.max_steps = min(max_steps, 1500)
+        self.backend = backend
+        self.alpha_deg = alpha_deg
+
+    def evaluate(
+        self,
+        geometry: WingGeometry,
+        airfoil: AirfoilData,
+        cg_fraction_mac: float,
+        gross_mass_g: float,
+        dihedral_profile: tuple[tuple[float, float], ...],
+    ) -> CfdEvaluation:
+        """Evaluate a candidate using proxy constraints and LBM cruise drag."""
+
+        proxy_eval = self.proxy.evaluate(
+            geometry=geometry,
+            airfoil=airfoil,
+            cg_fraction_mac=cg_fraction_mac,
+            gross_mass_g=gross_mass_g,
+            dihedral_profile=dihedral_profile,
+        )
+        if not proxy_eval.feasible:
+            return CfdEvaluation(
+                drag_coefficient=proxy_eval.drag_coefficient,
+                lift_to_drag=proxy_eval.lift_to_drag,
+                trim_elevon_deg=proxy_eval.trim_elevon_deg,
+                static_margin=proxy_eval.static_margin,
+                lateral_stability_index=proxy_eval.lateral_stability_index,
+                feasible=False,
+                source="lbm",
+            )
+
+        from wingopt.cfd.lbm import LbmSolver
+
+        cruise_speed = kmh_to_ms(self.config.mission.cruise_speed_kmh)
+        scenario = self.config.environment.resolved_scenarios()[0]
+        atmosphere = build_atmosphere(
+            temperature_c=scenario.temperature_c,
+            altitude_m=scenario.altitude_m,
+            pressure_pa=scenario.pressure_pa,
+            relative_humidity=scenario.relative_humidity,
+        )
+        solver = LbmSolver(resolution=self.resolution, backend=self.backend)
+        result = solver.solve_wing(
+            geometry=geometry,
+            airfoil_coordinates=airfoil.coordinates,
+            alpha_deg=self.alpha_deg,
+            v_ms=cruise_speed,
+            air_density=atmosphere.density_kgm3,
+            air_viscosity=atmosphere.viscosity_pas,
+            dihedral_profile=dihedral_profile,
+            max_steps=self.max_steps,
+        )
+        target_cl = (g_to_kg(gross_mass_g) * G) / (
+            0.5 * atmosphere.density_kgm3 * cruise_speed * cruise_speed * geometry.area_m2
+        )
+        lbm_ld = target_cl / max(result.cd, 1e-9)
+        return CfdEvaluation(
+            drag_coefficient=result.cd,
+            lift_to_drag=lbm_ld,
+            trim_elevon_deg=proxy_eval.trim_elevon_deg,
+            static_margin=proxy_eval.static_margin,
+            lateral_stability_index=proxy_eval.lateral_stability_index,
+            feasible=proxy_eval.feasible and result.cd > 0.0,
+            source="lbm",
+        )
+
 def build_cfd_engine(config: WingGenConfig) -> CfdEngine:
     """Build a configured CFD adapter for organic refinement."""
 
     engine = config.organic_refinement.engine
     if engine == "proxy":
         return ProxyCfdEngine(config=config)
+    if engine == "lbm":
+        return LbmCfdEngine(config=config)
     return ExternalCommandCfdEngine(config=config, engine_name=engine)
